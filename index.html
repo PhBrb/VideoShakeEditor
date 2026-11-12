@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.14. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.15. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -94,6 +94,7 @@
               <option value="0.25">0.25x</option>
               <option value="0.5">0.5x</option>
               <option value="0.75">0.75x</option>
+              <option value="0.92">0.92x</option>
               <option value="1" selected>1x</option>
               <option value="1.25">1.25x</option>
               <option value="1.5">1.5x</option>
@@ -217,7 +218,10 @@
           browser cannot encode the first codec, the next one listed in
           the dropdown entry is tried. The Speed control in the player
           applies to exports too: the clip is retimed and the audio is
-          varispeed, exactly as the preview plays it.
+          varispeed, exactly as the preview plays it. Shake and keyframe
+          moves run on the retimed output, so a 4 Hz tremor stays 4 Hz and
+          a keyframe keeps firing at the same absolute second no matter
+          what the speed is.
         </p>
       </div>
     </div>
@@ -885,9 +889,10 @@ function recomputeAutoZoom() {
   if (!ENGINE || !META || !isFinite(META.dur) || META.dur <= 0) { AUTO_ZOOM = 1; }
   else {
     var w = META.w, h = META.h, need = 1;
-    var span = META.dur;
+    // Cover the retimed output span: effects play over dur / speed.
+    var span = META.dur / (PLAY_SPEED || 1);
     for (var t = 0; t <= span; t += 0.04) {
-      var d = combinedDisp(t, META.dur > 0 ? t % META.dur : 0, w, h);
+      var d = combinedDisp(t, t, w, h);
       var ca = Math.abs(Math.cos(d.roll)), sa = Math.abs(Math.sin(d.roll));
       var rx = (ca * w) / 2 + (sa * h) / 2;
       var ry = (sa * w) / 2 + (ca * h) / 2;
@@ -911,10 +916,7 @@ function draw() {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
   if (!SHAKE_ON || !ENGINE) { ctx.drawImage(vid, 0, 0, w, h); return; }
-  // Shake time = clip time: every preview loop replays the first pass
-  // exactly, and the looped preview matches the export.
-  var T = vid.currentTime;
-  var d = combinedDisp(T, vid.currentTime, w, h);
+  var d = drawEffects(vid.currentTime, w, h);
   var s = curScale() * d.zb * (d.zoom || 1);
   ctx.translate(w / 2 + d.dx, h / 2 + d.dy);
   ctx.rotate(d.roll);
@@ -1026,7 +1028,13 @@ el("loopChk").addEventListener("change", function (e) {
 });
 
 // ================= playback speed =================
-var SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4];
+var SPEEDS = [0.25, 0.5, 0.75, 0.92, 1, 1.25, 1.5, 2, 4];
+// Effect time: the source clip is retimed by the speed FIRST, then the
+// shake and keyframe moves are applied on top of the retimed material.
+// So effects live on the output timeline: a 4 Hz tremor stays 4 Hz and a
+// keyframe at second 1 stays at second 1 of the final video, no matter
+// what the speed is. At 1x output time equals clip time.
+function effTime(t) { return t / (PLAY_SPEED || 1); }
 function applySpeed() {
   vid.playbackRate = PLAY_SPEED;
   // Varispeed on purpose: the frame-accurate export retimes audio with an
@@ -1034,6 +1042,9 @@ function applySpeed() {
   // same as the exported file instead of time-stretching.
   try { vid.preservesPitch = PLAY_SPEED === 1; } catch (e) {}
   try { vid.webkitPreservesPitch = PLAY_SPEED === 1; } catch (e) {}
+  // The auto safety zoom must cover the retimed output span, not the
+  // original clip length.
+  recomputeAutoZoom();
 }
 el("spdSel").addEventListener("change", function (e) {
   var v = parseFloat(e.target.value);
@@ -1676,6 +1687,14 @@ function moveAt(t) {
   return { x: chanAt("x", t), y: chanAt("y", t), r: chanAt("r", t), z: chanAt("z", t) };
 }
 
+// t = clip time. Both the shake engine and the keyframe channels are
+// evaluated at their output-timeline time effTime(t), so their frequency
+// and absolute positions do not change when the speed changes.
+function drawEffects(t, w, h) {
+  var e = effTime(t);
+  return combinedDisp(e, e, w, h);
+}
+
 function combinedDisp(T, clipT, w, h) {
   var d = ENGINE ? ENGINE.disp(T, w, h) : { dx: 0, dy: 0, roll: 0, zb: 1 };
   if (MOVE_ON && KEYS.length) {
@@ -2095,9 +2114,13 @@ function insertKeyAt(t) {
   }
   var k = { t: t, x: 0, y: 0, r: 0, z: 1, h: {} };
   ["x", "y", "r", "z"].forEach(function (ch) {
-    k[ch] = chanAt(ch, t);
-    // inherit the curve's local slope so inserting does not kink it
-    var m = (chanAt(ch, t + 0.01) - chanAt(ch, t - 0.01)) / 0.02;
+    // Capture the values currently visible at the playhead; effects are
+    // evaluated on the output timeline, so sample the channels at
+    // effTime(t), while the keyframe itself is stored at its timeline
+    // position t (its output second).
+    var e = effTime(t);
+    k[ch] = chanAt(ch, e);
+    var m = (chanAt(ch, e + 0.01) - chanAt(ch, e - 0.01)) / 0.02;
     k.h[ch] = { i: m, o: m };
   });
   KEYS.push(k);
