@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.8. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.9. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -266,6 +266,35 @@
           keep edges covered. Auto mode computes the tightest safe zoom over the
           whole clip and compensates zoom keyframes below 1x, up to the 1.8x
           cap: zooming out further than that shows black borders.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="cardtitle">Audio</div>
+        <div class="row wrap2" style="margin-bottom:8px">
+          <button id="specBtn" class="btn secondary">Analyze audio</button>
+          <label class="check"><input id="notchOn" type="checkbox" checked> Band reject on</label>
+          <span class="note" id="specInfo" style="align-self:center; margin:0"></span>
+        </div>
+        <div style="position:relative">
+          <canvas id="specCanvas" style="display:block;width:100%;height:180px;border:1px solid #1e293b;border-radius:8px;background:#0b1220;touch-action:none;cursor:crosshair"></canvas>
+          <span class="glab">Spectrum (whole clip)</span>
+          <span class="grange" id="specRange"></span>
+        </div>
+        <div class="row wrap2" style="margin-top:8px">
+          <label style="min-width:110px"><span class="lab">Center (Hz)</span>
+            <input id="notchF" type="number" min="10" max="20000" step="1" value="300" style="width:100%" disabled></label>
+          <label style="min-width:110px"><span class="lab">Width (Hz)</span>
+            <input id="notchW" type="number" min="1" max="10000" step="1" value="100" style="width:100%" disabled></label>
+          <button id="notchDel" class="btn secondary" disabled>Delete band</button>
+        </div>
+        <p class="note" style="margin:8px 0 0 0">
+          The spectrum averages the audio over the whole clip. Look for a
+          narrow peak where the noise sits (hum, whistles), click the spectrum
+          to place a band reject on it, drag the band to move it and its edges
+          to widen it. Several bands can be placed. The filters apply to the
+          exported audio in both export paths; preview playback stays
+          unfiltered.
         </p>
       </div>
 
@@ -771,7 +800,7 @@ var TRIM_START = 0, TRIM_END = 0;
 var EXPORT_FALLBACK = "";
 var EXPORTING = false, ANALYZING = false, CONV_BUSY = false;
 var REC = null, CHUNKS = [], DISCARD = false;
-var audioCtx = null, audioDest = null;
+var audioCtx = null, audioDest = null, mediaSrc = null;
 var RESULT_URL = null, CONV_URL = "";
 var FFMPEG = null, CONV_READY = false, CONV_LOADING = false;
 var sourceFile = null, pendingName = "";
@@ -912,6 +941,9 @@ vid.addEventListener("loadedmetadata", function () {
   el("moveCard").style.display = "block";
   renderRuler();
   renderTimeline();
+  SPEC = null;
+  drawSpectrum();
+  el("specInfo").textContent = "";
   vid.currentTime = 1e-3;
   el("timeLbl").textContent = "0:00 / " + fmtTime(META.dur);
 });
@@ -1154,12 +1186,25 @@ async function startExportRealtime() {
   try {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      var src = audioCtx.createMediaElementSource(vid);
+      mediaSrc = audioCtx.createMediaElementSource(vid);
       audioDest = audioCtx.createMediaStreamDestination();
-      src.connect(audioDest);
-      src.connect(audioCtx.destination);
     }
     await audioCtx.resume();
+    // Rebuild the chain each export so the current band rejects apply.
+    try { mediaSrc.disconnect(); } catch (e) {}
+    var node = mediaSrc;
+    if (NOTCH_ON) {
+      for (var ni = 0; ni < NOTCHES.length; ni++) {
+        var biq = audioCtx.createBiquadFilter();
+        biq.type = "notch";
+        biq.frequency.value = NOTCHES[ni].f;
+        biq.Q.value = Math.max(0.01, NOTCHES[ni].f / NOTCHES[ni].w);
+        node.connect(biq);
+        node = biq;
+      }
+    }
+    node.connect(audioDest);
+    node.connect(audioCtx.destination);
     var at = audioDest.stream.getAudioTracks()[0];
     if (at) stream.addTrack(at);
   } catch (e) {}
@@ -1264,6 +1309,7 @@ async function startExportAccurate() {
   // rendering inside it still uses full-clip time for the shake and keyframes.
   var rgPre = trimRange();
   if (audioBuf) audioBuf = sliceAudio(audioBuf, rgPre.start, rgPre.end);
+  audioBuf = await applyNotches(audioBuf);
 
   EXPORTING = true;
   DISCARD = false;
@@ -2027,6 +2073,314 @@ el("gChannel").addEventListener("change", function (e) {
 });
 window.addEventListener("resize", drawAllGraphs);
 
+/* ================= audio spectrum + band reject ================= */
+var NOTCHES = [];   // [{f: center Hz, w: width Hz}]
+var NSEL = -1;
+var NOTCH_ON = true;
+var SPEC = null;    // {db: Float32Array, maxDb, binHz, nyq, windows}
+var NDRAG = null;
+var SVIEW = null;
+var FMIN = 20, FMAX = 20000;
+
+function fftRun(re, im) {
+  var n = re.length;
+  var i, j = 0, bit, tr, ti;
+  for (i = 1; i < n; i++) {
+    bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      tr = re[i]; re[i] = re[j]; re[j] = tr;
+      ti = im[i]; im[i] = im[j]; im[j] = ti;
+    }
+  }
+  for (var len = 2; len <= n; len <<= 1) {
+    var ang = -2 * Math.PI / len;
+    var wr = Math.cos(ang), wi = Math.sin(ang);
+    var halfLen = len >> 1;
+    for (i = 0; i < n; i += len) {
+      var cwr = 1, cwi = 0;
+      for (var k = 0; k < halfLen; k++) {
+        var ur = re[i + k], ui = im[i + k];
+        var xr = re[i + k + halfLen], xi = im[i + k + halfLen];
+        var vr = xr * cwr - xi * cwi;
+        var vi = xr * cwi + xi * cwr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + halfLen] = ur - vr; im[i + k + halfLen] = ui - vi;
+        var twr = cwr * wr - cwi * wi;
+        cwi = cwr * wi + cwi * wr;
+        cwr = twr;
+      }
+    }
+  }
+}
+
+function buildSpectrum(buf) {
+  var N = buf.length, chs = buf.numberOfChannels;
+  var mono = new Float64Array(N);
+  var c, i;
+  for (c = 0; c < chs; c++) {
+    var d = buf.getChannelData(c);
+    for (i = 0; i < N; i++) mono[i] += d[i];
+  }
+  if (chs > 1) { var inv = 1 / chs; for (i = 0; i < N; i++) mono[i] *= inv; }
+  var W = 16384;
+  if (N < W) { var padded = new Float64Array(W); padded.set(mono); mono = padded; N = W; }
+  var half = W >> 1;
+  var hann = new Float64Array(W);
+  for (i = 0; i < W; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (W - 1));
+  var count = Math.max(1, Math.min(300, Math.floor((N - W) / (W / 2)) + 1));
+  var re = new Float64Array(W), im = new Float64Array(W);
+  var acc = new Float64Array(half);
+  for (var wi = 0; wi < count; wi++) {
+    var off = count === 1 ? 0 : Math.floor((N - W) * wi / (count - 1));
+    for (var s = 0; s < W; s++) { re[s] = mono[off + s] * hann[s]; im[s] = 0; }
+    fftRun(re, im);
+    for (var b = 0; b < half; b++) acc[b] += re[b] * re[b] + im[b] * im[b];
+  }
+  var db = new Float32Array(half), maxDb = -Infinity;
+  for (b = 0; b < half; b++) {
+    var v = 10 * Math.log10(acc[b] / count + 1e-30);
+    db[b] = v;
+    if (v > maxDb) maxDb = v;
+  }
+  SPEC = { db: db, maxDb: maxDb, binHz: buf.sampleRate / W, nyq: buf.sampleRate / 2, windows: count };
+}
+
+async function analyzeAudio() {
+  if (!META || busy()) return;
+  ANALYZING = true;
+  el("specBtn").disabled = true;
+  el("expBtn").disabled = true;
+  el("specInfo").textContent = "Decoding audio...";
+  try {
+    var ab = await (await fetch(vid.src)).arrayBuffer();
+    var AC = window.AudioContext || window.webkitAudioContext;
+    var ctx = new AC();
+    var buf = await ctx.decodeAudioData(ab);
+    if (ctx.close) ctx.close();
+    buildSpectrum(buf);
+    el("specInfo").textContent = buf.numberOfChannels + "ch \u00b7 " + buf.sampleRate + " Hz \u00b7 " +
+      fmtTime(buf.duration) + " analyzed \u00b7 " + SPEC.windows + " windows";
+  } catch (e) {
+    SPEC = null;
+    el("specInfo").textContent = "Could not decode audio: " + (e && e.message ? e.message : "unknown error");
+  }
+  ANALYZING = false;
+  el("specBtn").disabled = false;
+  el("expBtn").disabled = busy();
+  drawSpectrum();
+}
+
+async function applyNotches(buf) {
+  if (!buf || !NOTCH_ON || !NOTCHES.length) return buf;
+  try {
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    var ctx = new OC(buf.numberOfChannels, buf.length, buf.sampleRate);
+    var src = ctx.createBufferSource();
+    src.buffer = buf;
+    var node = src;
+    for (var i = 0; i < NOTCHES.length; i++) {
+      var biq = ctx.createBiquadFilter();
+      biq.type = "notch";
+      biq.frequency.value = NOTCHES[i].f;
+      biq.Q.value = Math.max(0.01, NOTCHES[i].f / NOTCHES[i].w);
+      node.connect(biq);
+      node = biq;
+    }
+    node.connect(ctx.destination);
+    src.start(0);
+    return await ctx.startRendering();
+  } catch (e) {
+    return buf;
+  }
+}
+
+function sxOf(f) { return Math.log(f / FMIN) / Math.log(FMAX / FMIN); }
+function sfOf(u) { return FMIN * Math.pow(FMAX / FMIN, u); }
+
+function drawSpectrum() {
+  var cn = el("specCanvas");
+  if (!cn || !cn.getContext) return;
+  var cw = cn.clientWidth, chh = cn.clientHeight;
+  if (cw < 10 || chh < 10) return;
+  var dpr = window.devicePixelRatio || 1;
+  if (cn.width !== Math.round(cw * dpr)) cn.width = Math.round(cw * dpr);
+  if (cn.height !== Math.round(chh * dpr)) cn.height = Math.round(chh * dpr);
+  var ctx = cn.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  SVIEW = { W: cw, H: chh };
+  ctx.fillStyle = "#0b1220";
+  ctx.fillRect(0, 0, cw, chh);
+  ctx.font = "9px sans-serif";
+  var gf = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+  ctx.strokeStyle = "#1e293b";
+  ctx.fillStyle = "#64748b";
+  ctx.lineWidth = 1;
+  for (var gi = 0; gi < gf.length; gi++) {
+    var gx = Math.round(sxOf(gf[gi]) * cw) + 0.5;
+    if (gx < 0 || gx > cw) continue;
+    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, chh); ctx.stroke();
+    ctx.fillText(gf[gi] >= 1000 ? (gf[gi] / 1000) + "k" : String(gf[gi]), gx + 2, chh - 3);
+  }
+  if (SPEC) {
+    var RANGE = 100;
+    var yOf = function (v) {
+      var y = chh * (1 - (v - (SPEC.maxDb - RANGE)) / RANGE);
+      return y < 0 ? 0 : (y > chh ? chh : y);
+    };
+    for (var d = 0; d <= 80; d += 20) {
+      var gy = Math.round(yOf(SPEC.maxDb - d)) + 0.5;
+      if (gy < 0 || gy > chh) continue;
+      ctx.strokeStyle = "#1e293b";
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(cw, gy); ctx.stroke();
+      ctx.fillStyle = "#64748b";
+      ctx.fillText(d === 0 ? "0 dB" : "-" + d, 3, gy - 2);
+    }
+    ctx.beginPath();
+    var started = false;
+    for (var px = 0; px < cw; px++) {
+      var f = sfOf((px + 0.5) / cw);
+      if (f > SPEC.nyq) break;
+      var bidx = f / SPEC.binHz;
+      var b0 = Math.floor(bidx);
+      var b1 = Math.min(SPEC.db.length - 1, b0 + 1);
+      var frac = bidx - b0;
+      var v = SPEC.db[b0] + (SPEC.db[b1] - SPEC.db[b0]) * frac;
+      var y = yOf(v);
+      if (!started) { ctx.moveTo(px, y); started = true; }
+      else ctx.lineTo(px, y);
+    }
+    if (started) {
+      ctx.strokeStyle = "#818cf8";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.lineTo(cw, chh); ctx.lineTo(0, chh); ctx.closePath();
+      ctx.fillStyle = "rgba(129,140,248,0.15)";
+      ctx.fill();
+    }
+  } else {
+    ctx.fillStyle = "#475569";
+    ctx.fillText("Click Analyze audio to show the clip's average spectrum", 12, chh / 2);
+  }
+  for (var ni = 0; ni < NOTCHES.length; ni++) {
+    var n = NOTCHES[ni];
+    var xl = sxOf(Math.max(FMIN, n.f - n.w / 2)) * cw;
+    var xr = sxOf(Math.min(FMAX, n.f + n.w / 2)) * cw;
+    ctx.fillStyle = ni === NSEL ? "rgba(244,63,94,0.30)" :
+      (NOTCH_ON ? "rgba(244,63,94,0.18)" : "rgba(100,116,139,0.12)");
+    ctx.fillRect(xl, 0, Math.max(2, xr - xl), chh);
+    if (ni === NSEL) {
+      ctx.fillStyle = "rgba(244,63,94,0.9)";
+      ctx.fillRect(xl - 1, 0, 3, chh);
+      ctx.fillRect(xr - 2, 0, 3, chh);
+    }
+  }
+  el("specRange").textContent = SPEC ? ("resolution " + SPEC.binHz.toFixed(1) + " Hz") : "";
+}
+
+function refreshNotchEditor() {
+  var has = NSEL >= 0 && NSEL < NOTCHES.length;
+  el("notchF").disabled = !has;
+  el("notchW").disabled = !has;
+  el("notchDel").disabled = !has;
+  el("notchF").value = has ? String(Math.round(NOTCHES[NSEL].f)) : "";
+  el("notchW").value = has ? String(Math.round(NOTCHES[NSEL].w)) : "";
+}
+
+(function () {
+  var cn = el("specCanvas");
+  cn.addEventListener("pointerdown", function (e) {
+    var rect = cn.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    if (!SVIEW) return;
+    var W = SVIEW.W;
+    if (NSEL >= 0 && NSEL < NOTCHES.length) {
+      var n = NOTCHES[NSEL];
+      var xl = sxOf(Math.max(FMIN, n.f - n.w / 2)) * W;
+      var xr = sxOf(Math.min(FMAX, n.f + n.w / 2)) * W;
+      if (Math.abs(x - xl) <= 7) { NDRAG = { mode: "edge", which: "l" }; try { cn.setPointerCapture(e.pointerId); } catch (er) {} return; }
+      if (Math.abs(x - xr) <= 7) { NDRAG = { mode: "edge", which: "r" }; try { cn.setPointerCapture(e.pointerId); } catch (er) {} return; }
+    }
+    for (var i = NOTCHES.length - 1; i >= 0; i--) {
+      var nb = NOTCHES[i];
+      var l = sxOf(Math.max(FMIN, nb.f - nb.w / 2)) * W;
+      var r = sxOf(Math.min(FMAX, nb.f + nb.w / 2)) * W;
+      if (x >= l - 4 && x <= r + 4) {
+        NSEL = i;
+        NDRAG = { mode: "move" };
+        refreshNotchEditor();
+        drawSpectrum();
+        try { cn.setPointerCapture(e.pointerId); } catch (er) {}
+        return;
+      }
+    }
+    var f = sfOf(Math.max(0, Math.min(1, x / W)));
+    NOTCHES.push({ f: Math.round(Math.max(20, Math.min(20000, f))), w: Math.max(10, Math.round(f / 10)) });
+    NSEL = NOTCHES.length - 1;
+    NDRAG = { mode: "move" };
+    refreshNotchEditor();
+    drawSpectrum();
+    try { cn.setPointerCapture(e.pointerId); } catch (er) {}
+  });
+  cn.addEventListener("pointermove", function (e) {
+    if (!NDRAG || NSEL < 0 || NSEL >= NOTCHES.length) return;
+    var rect = cn.getBoundingClientRect();
+    var x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    var f = sfOf(Math.max(0, Math.min(1, x / rect.width)));
+    var n = NOTCHES[NSEL];
+    if (NDRAG.mode === "move") {
+      n.f = Math.round(Math.max(20, Math.min(20000, f)));
+    } else if (NDRAG.which === "l") {
+      var rEdge = n.f + n.w / 2;
+      var nl = Math.min(rEdge - 1, f);
+      n.f = Math.round((nl + rEdge) / 2);
+      n.w = Math.max(1, Math.round(rEdge - nl));
+    } else {
+      var lEdge = n.f - n.w / 2;
+      var nr = Math.max(lEdge + 1, f);
+      n.f = Math.round((lEdge + nr) / 2);
+      n.w = Math.max(1, Math.round(nr - lEdge));
+    }
+    refreshNotchEditor();
+    drawSpectrum();
+  });
+  cn.addEventListener("pointerup", function () { NDRAG = null; });
+  cn.addEventListener("pointercancel", function () { NDRAG = null; });
+})();
+
+el("specBtn").addEventListener("click", analyzeAudio);
+el("notchOn").addEventListener("change", function (e) {
+  NOTCH_ON = e.target.checked;
+  drawSpectrum();
+});
+el("notchF").addEventListener("change", function (e) {
+  if (NSEL < 0 || NSEL >= NOTCHES.length) return;
+  var v = parseFloat(e.target.value);
+  if (isNaN(v)) v = NOTCHES[NSEL].f;
+  NOTCHES[NSEL].f = Math.round(Math.max(10, Math.min(20000, v)));
+  e.target.value = String(NOTCHES[NSEL].f);
+  drawSpectrum();
+});
+el("notchW").addEventListener("change", function (e) {
+  if (NSEL < 0 || NSEL >= NOTCHES.length) return;
+  var v = parseFloat(e.target.value);
+  if (isNaN(v)) v = NOTCHES[NSEL].w;
+  NOTCHES[NSEL].w = Math.round(Math.max(1, Math.min(10000, v)));
+  e.target.value = String(NOTCHES[NSEL].w);
+  drawSpectrum();
+});
+el("notchDel").addEventListener("click", function () {
+  if (NSEL < 0 || NSEL >= NOTCHES.length) return;
+  NOTCHES.splice(NSEL, 1);
+  NSEL = -1;
+  refreshNotchEditor();
+  drawSpectrum();
+});
+window.addEventListener("resize", drawSpectrum);
+drawSpectrum();
+refreshNotchEditor();
+
 /* ================= settings save/load ================= */
 function collectSettings() {
   var s = {
@@ -2040,6 +2394,8 @@ function collectSettings() {
     exportFps: EXPORT_FPS,
     trimStart: TRIM_START,
     trimEnd: TRIM_END,
+    notches: NOTCHES.map(function (n) { return { f: n.f, w: n.w }; }),
+    notchOn: NOTCH_ON,
     quality: QUALITY,
     shakeOn: SHAKE_ON,
     loop: LOOP,
@@ -2124,6 +2480,22 @@ el("loadFile").addEventListener("change", function (e) {
       if (typeof s.trimEnd === "number" && s.trimEnd >= 0) {
         TRIM_END = s.trimEnd;
         el("trimEnd").value = String(TRIM_END);
+      }
+      if (Array.isArray(s.notches)) {
+        NOTCHES = s.notches.filter(function (n) { return n && typeof n.f === "number"; }).map(function (n) {
+          return {
+            f: Math.max(10, Math.min(20000, n.f)),
+            w: typeof n.w === "number" ? Math.max(1, Math.min(10000, n.w)) : 50
+          };
+        });
+        NSEL = -1;
+        refreshNotchEditor();
+        drawSpectrum();
+      }
+      if (typeof s.notchOn === "boolean") {
+        NOTCH_ON = s.notchOn;
+        el("notchOn").checked = NOTCH_ON;
+        drawSpectrum();
       }
       if (typeof s.quality === "number" && [8000000, 16000000, 25000000].indexOf(s.quality) >= 0) {
         QUALITY = s.quality;
