@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.15. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.16. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -90,17 +90,7 @@
           <button id="playBtn" class="btn secondary">Play</button>
           <label class="check"><input id="loopChk" type="checkbox" checked> Loop</label>
           <label class="check">Speed
-            <select id="spdSel">
-              <option value="0.25">0.25x</option>
-              <option value="0.5">0.5x</option>
-              <option value="0.75">0.75x</option>
-              <option value="0.92">0.92x</option>
-              <option value="1" selected>1x</option>
-              <option value="1.25">1.25x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2x</option>
-              <option value="4">4x</option>
-            </select></label>
+            <select id="spdSel"><option value="1" selected>1x</option></select></label>
           <input id="scrub" type="range" min="0" max="1" step="0.01" value="0" style="flex:1">
           <span id="timeLbl" class="muted small mono" style="width:90px; text-align:right">0:00 / 0:00</span>
         </div>
@@ -1028,7 +1018,23 @@ el("loopChk").addEventListener("change", function (e) {
 });
 
 // ================= playback speed =================
-var SPEEDS = [0.25, 0.5, 0.75, 0.92, 1, 1.25, 1.5, 2, 4];
+// Speed options run from 0.25x to 4x in fine 0.01 steps, generated from
+// integer cents so no float drift creeps into the list. The dropdown is
+// built from this array too, so the list and the validator stay in sync.
+var SPEEDS = (function () {
+  var a = [];
+  for (var c = 25; c <= 400; c++) a.push(c / 100);
+  return a;
+})();
+(function () {
+  var sel = el("spdSel");
+  var html = "";
+  for (var i = 0; i < SPEEDS.length; i++) {
+    html += '<option value="' + SPEEDS[i] + '">' + SPEEDS[i] + 'x</option>';
+  }
+  sel.innerHTML = html;
+  sel.value = "1";
+})();
 // Effect time: the source clip is retimed by the speed FIRST, then the
 // shake and keyframe moves are applied on top of the retimed material.
 // So effects live on the output timeline: a 4 Hz tremor stays 4 Hz and a
