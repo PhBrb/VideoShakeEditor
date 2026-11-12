@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.6. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.7. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -100,22 +100,38 @@
           <label class="check"><input id="moveOn" type="checkbox" checked> Move on</label>
         </div>
         <p class="note" style="margin:8px 0 4px 0">
-          Intentional camera movement layered on top of the shake, edited as
-          splines: one graph per channel (pan X, pan Y, roll, zoom). Drag a
-          diamond sideways to move a keyframe in time, up or down to change
-          that channel's value. The selected keyframe grows round tangent
+          Intentional camera movement layered on top of the shake, edited as a
+          spline graph. Pick a channel (pan X, pan Y, roll, zoom) in the
+          dropdown. Drag a diamond sideways to move a keyframe in time, up or
+          down to change its value. The selected keyframe shows round tangent
           handles: drag a handle to set the spline's angle at the keyframe.
-          Steep handles make the movement overshoot and settle back. Click a
-          track or graph to seek, double-click a graph to add a key there.
-          Extracting a reference video writes its slow intended movement here
-          as keyframes and keeps only the residual shake as the reference layer.
+          Steep handles make the movement overshoot and settle back; the graph
+          always rescales so handles stay visible. Click the track or graph to
+          seek, double-click the graph to add a key there. Extracting a
+          reference video writes its slow intended movement here as
+          keyframes and keeps the residual shake as the reference layer.
         </p>
         <div id="tlWrap" style="position:relative">
           <div id="track" class="track">
             <div id="ruler"></div>
             <div id="keysBox"></div>
           </div>
-          <div id="graphRows" style="margin-top:6px"></div>
+          <div class="row" style="margin-top:10px; gap:10px; align-items:center">
+            <label style="min-width:130px; margin:0"><span class="lab">Graph channel</span>
+              <select id="gChannel">
+                <option value="x" selected>Pan X</option>
+                <option value="y">Pan Y</option>
+                <option value="r">Roll</option>
+                <option value="z">Zoom</option>
+              </select>
+            </label>
+            <span class="note" style="margin:0">Drag diamonds in time and value; drag the round handles to set the spline angle at the key (steep = overshoot). Double-click to add a key.</span>
+          </div>
+          <div class="grow" style="margin-top:6px">
+            <canvas id="gCanvas" style="display:block;width:100%;height:200px;border:1px solid #1e293b;border-radius:8px;background:#0b1220;touch-action:none;cursor:crosshair"></canvas>
+            <span class="glab" id="gLab"></span>
+            <span class="grange" id="gRange"></span>
+          </div>
           <div id="playhead" class="playhead"></div>
         </div>
         <div class="row wrap2" style="margin-top:10px">
@@ -149,7 +165,7 @@
           <div class="row wrap2" style="margin-top:8px">
             <button id="kFlatten" class="btn secondary">Flatten handles (ease)</button>
             <button id="kSmooth" class="btn secondary">Auto-smooth handles</button>
-            <span class="note" style="align-self:center; margin:0">Handles set the spline angle at the key; drag them in the graphs above.</span>
+            <span class="note" style="align-self:center; margin:0">Handles set the spline angle at the key; drag them in the graph above.</span>
           </div>
         </div>
       </div>
@@ -1658,7 +1674,7 @@ el("track").addEventListener("pointermove", function (e) {
 });
 window.addEventListener("pointerup", function () { TRACK_SCRUB = false; });
 
-/* ================= channel graphs: splines with tangent handles ================= */
+/* ================= channel graph: one spline editor, channel via dropdown ================= */
 var CHANNELS = [
   { id: "x", label: "Pan X", color: "#818cf8", fmt: function (v) { return v.toFixed(1) + "%"; } },
   { id: "y", label: "Pan Y", color: "#34d399", fmt: function (v) { return v.toFixed(1) + "%"; } },
@@ -1666,47 +1682,59 @@ var CHANNELS = [
   { id: "z", label: "Zoom", color: "#f472b6", fmt: function (v) { return v.toFixed(2) + "x"; } }
 ];
 var GLIM = { x: [-150, 150], y: [-150, 150], r: [-90, 90], z: [0.5, 2.5] };
-var GVIEW = {}, GDRAG = null;
+var GCH = "x", GVIEW = null, GDRAG = null;
 
+function chanCfg(ch) {
+  for (var i = 0; i < CHANNELS.length; i++) if (CHANNELS[i].id === ch) return CHANNELS[i];
+  return CHANNELS[0];
+}
+// Only handles that actually shape the spline are shown: the out-handle of the
+// last key and the in-handle of the first key have no segment to affect.
+function gHandleSides(i) {
+  var sides = [];
+  if (i >= 0 && i < KEYS.length - 1) sides.push("o");
+  if (i > 0) sides.push("i");
+  return sides;
+}
 function gHandleDt(i, side) {
   var k = KEYS[i];
   var nb = side === "o" ? KEYS[i + 1] : KEYS[i - 1];
   var d = nb ? Math.abs(side === "o" ? nb.t - k.t : k.t - nb.t) * 0.4 : 0.25;
   return Math.max(0.05, Math.min(0.4, d));
 }
-function gUnmapY(ch, y) {
-  var m = GVIEW[ch];
-  return m ? m.vmax - (y / m.H) * (m.vmax - m.vmin) : 0;
+function gUnmapY(y) {
+  return GVIEW ? GVIEW.vmax - (y / GVIEW.H) * (GVIEW.vmax - GVIEW.vmin) : 0;
 }
-function gHitHandle(ch, x, y) {
-  if (SEL < 0 || SEL >= KEYS.length || !GVIEW[ch] || !META || META.dur <= 0) return null;
-  var k = KEYS[SEL], m = GVIEW[ch];
-  var v = kv(k, ch);
-  for (var s = 0; s < 2; s++) {
-    var side = s === 0 ? "o" : "i";
+function gHitHandle(x, y) {
+  if (SEL < 0 || SEL >= KEYS.length || !GVIEW || !META || META.dur <= 0) return null;
+  var k = KEYS[SEL], m = GVIEW;
+  var v = kv(k, GCH);
+  var sides = gHandleSides(SEL);
+  for (var s = 0; s < sides.length; s++) {
+    var side = sides[s];
     var dir = side === "o" ? 1 : -1;
     var hd = gHandleDt(SEL, side);
-    var hv = v + slopeOf(k, ch, side) * dir * hd;
+    var hv = v + slopeOf(k, GCH, side) * dir * hd;
     var hx = ((k.t + dir * hd) / META.dur) * m.W;
     var hy = m.H - (hv - m.vmin) / (m.vmax - m.vmin) * m.H;
-    if (Math.abs(hx - x) <= 9 && Math.abs(hy - y) <= 9) return side;
+    if (Math.abs(hx - x) <= 10 && Math.abs(hy - y) <= 10) return side;
   }
   return null;
 }
-function gHitKey(ch, x, y) {
-  var m = GVIEW[ch];
+function gHitKey(x, y) {
+  var m = GVIEW;
   if (!m || !META || META.dur <= 0) return -1;
   for (var i = 0; i < KEYS.length; i++) {
     var k = KEYS[i];
     var kx = (k.t / META.dur) * m.W;
-    var ky = m.H - (kv(k, ch) - m.vmin) / (m.vmax - m.vmin) * m.H;
+    var ky = m.H - (kv(k, GCH) - m.vmin) / (m.vmax - m.vmin) * m.H;
     if (Math.abs(kx - x) <= 8 && Math.abs(ky - y) <= 8) return i;
   }
   return -1;
 }
 
 function drawGraph(ch) {
-  var cn = el("gc_" + ch);
+  var cn = el("gCanvas");
   if (!cn) return;
   var cw = cn.clientWidth, chh = cn.clientHeight;
   if (cw < 10 || chh < 10) return;
@@ -1719,10 +1747,11 @@ function drawGraph(ch) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#0b1220";
   ctx.fillRect(0, 0, cw, chh);
-  var C = null;
-  for (var ci = 0; ci < CHANNELS.length; ci++) if (CHANNELS[ci].id === ch) C = CHANNELS[ci];
-  if (!META || META.dur <= 0) { GVIEW[ch] = null; return; }
-  // sample the spline and derive the value range
+  var C = chanCfg(ch);
+  if (!META || META.dur <= 0) { GVIEW = null; el("gRange").textContent = ""; return; }
+  // Sample the spline for the value range. The range also includes the
+  // selected key's tangent handles, so a handle can never be dragged outside
+  // the visible graph: the view always scales to keep it on screen.
   var npts = Math.max(80, Math.min(900, Math.round(cw)));
   var vals = new Float32Array(npts), vmin = Infinity, vmax = -Infinity;
   for (var i = 0; i < npts; i++) {
@@ -1733,19 +1762,29 @@ function drawGraph(ch) {
     if (v > vmax) vmax = v;
   }
   var base = ch === "z" ? 1 : 0;
+  if (SEL >= 0 && SEL < KEYS.length) {
+    var hk = KEYS[SEL], hv0 = kv(hk, ch);
+    var hSides = gHandleSides(SEL);
+    for (var hsi = 0; hsi < hSides.length; hsi++) {
+      var hdir = hSides[hsi] === "o" ? 1 : -1;
+      var hval = hv0 + slopeOf(hk, ch, hSides[hsi]) * hdir * gHandleDt(SEL, hSides[hsi]);
+      if (hval < vmin) vmin = hval;
+      if (hval > vmax) vmax = hval;
+    }
+  }
   if (!isFinite(vmin) || !isFinite(vmax)) { vmin = base - 1; vmax = base + 1; }
   if (vmax - vmin < 1e-9) {
     var pad0 = ch === "z" ? 0.06 : 1.2;
     vmin = base - pad0; vmax = base + pad0;
   }
-  var pad = (vmax - vmin) * 0.18;
+  var pad = (vmax - vmin) * 0.15;
   vmin -= pad; vmax += pad;
-  GVIEW[ch] = { W: cw, H: chh, vmin: vmin, vmax: vmax };
+  GVIEW = { W: cw, H: chh, vmin: vmin, vmax: vmax };
   var Y = function (v) { return chh - (v - vmin) / (vmax - vmin) * chh; };
   // baseline (0 for x/y/r, 1 for z)
   if (base >= vmin && base <= vmax) {
     ctx.strokeStyle = "#1e293b";
-    ctx.setLineDash([3, 3]);
+    ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(0, Y(base));
     ctx.lineTo(cw, Y(base));
@@ -1754,7 +1793,7 @@ function drawGraph(ch) {
   }
   // the spline
   ctx.strokeStyle = C.color;
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 2;
   ctx.beginPath();
   for (var j = 0; j < npts; j++) {
     var px = (j / (npts - 1)) * cw;
@@ -1771,11 +1810,11 @@ function drawGraph(ch) {
     ctx.translate(kx, ky);
     ctx.rotate(Math.PI / 4);
     ctx.fillStyle = a === SEL ? "#f43f5e" : C.color;
-    ctx.fillRect(-4, -4, 8, 8);
+    ctx.fillRect(-4.5, -4.5, 9, 9);
     if (a === SEL) {
       ctx.strokeStyle = "#fecdd3";
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(-4, -4, 8, 8);
+      ctx.strokeRect(-4.5, -4.5, 9, 9);
     }
     ctx.restore();
   }
@@ -1785,32 +1824,36 @@ function drawGraph(ch) {
     var sv = kv(sk, ch);
     var sx = (sk.t / META.dur) * cw;
     var sy = Y(sv);
-    for (var si = 0; si < 2; si++) {
-      var side = si === 0 ? "o" : "i";
+    var sides = gHandleSides(SEL);
+    for (var si = 0; si < sides.length; si++) {
+      var side = sides[si];
       var dir = side === "o" ? 1 : -1;
       var hd = gHandleDt(SEL, side);
       var hv = sv + slopeOf(sk, ch, side) * dir * hd;
       var hx = ((sk.t + dir * hd) / META.dur) * cw;
       var hy = Y(hv);
       ctx.strokeStyle = "#475569";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.lineTo(hx, hy);
       ctx.stroke();
       ctx.fillStyle = "#e2e8f0";
       ctx.beginPath();
-      ctx.arc(hx, hy, 3.5, 0, Math.PI * 2);
+      ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = C.color;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
     }
   }
-  var rg = el("gr_" + ch);
-  if (rg) rg.textContent = C.fmt(vmax) + " / " + C.fmt(vmin);
+  el("gRange").textContent = C.fmt(vmax) + " / " + C.fmt(vmin);
 }
 function drawAllGraphs() {
-  for (var i = 0; i < CHANNELS.length; i++) drawGraph(CHANNELS[i].id);
+  drawGraph(GCH);
+  var C = chanCfg(GCH);
+  el("gLab").textContent = C.label;
+  el("gLab").style.color = C.color;
 }
 function gSeek(e, cn) {
   if (!META || META.dur <= 0) return;
@@ -1848,22 +1891,22 @@ function autoSmoothKey(k) {
     setSlope(k, ch, "o", m);
   });
 }
-function attachGraphHandlers(cn, ch) {
+function attachGraphHandlers(cn) {
   cn.addEventListener("pointerdown", function (e) {
     if (!META || META.dur <= 0) return;
     var rect = cn.getBoundingClientRect();
     var x = e.clientX - rect.left, y = e.clientY - rect.top;
-    var side = gHitHandle(ch, x, y);
+    var side = gHitHandle(x, y);
     if (side) {
-      GDRAG = { mode: "handle", ch: ch, side: side, hd: gHandleDt(SEL, side), cn: cn };
+      GDRAG = { mode: "handle", ch: GCH, side: side, hd: gHandleDt(SEL, side), cn: cn };
       try { cn.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
       return;
     }
-    var idx = gHitKey(ch, x, y);
+    var idx = gHitKey(x, y);
     if (idx >= 0) {
       selectKey(idx);
-      GDRAG = { mode: "key", ch: ch, k: KEYS[SEL], cn: cn };
+      GDRAG = { mode: "key", ch: GCH, k: KEYS[SEL], cn: cn };
       try { cn.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
       return;
@@ -1877,20 +1920,20 @@ function attachGraphHandlers(cn, ch) {
       var x = e.clientX - rect.left, y = e.clientY - rect.top;
       var k = GDRAG.mode === "key" ? GDRAG.k : KEYS[SEL];
       if (GDRAG.mode === "handle") {
-        var hv = gUnmapY(ch, y);
-        var m = (hv - kv(k, ch)) / (GDRAG.side === "o" ? GDRAG.hd : -GDRAG.hd);
-        setSlope(k, ch, GDRAG.side, m);
-        drawGraph(ch);
+        var hv = gUnmapY(y);
+        var m = (hv - kv(k, GDRAG.ch)) / (GDRAG.side === "o" ? GDRAG.hd : -GDRAG.hd);
+        setSlope(k, GDRAG.ch, GDRAG.side, m);
+        drawGraph(GDRAG.ch);
       } else {
         var tt = Math.max(0, Math.min(META.dur, Math.round((x / rect.width) * META.dur * 20) / 20));
         k.t = tt;
         var lim = GLIM[GDRAG.ch];
-        k[GDRAG.ch] = Math.max(lim[0], Math.min(lim[1], gUnmapY(GDRAG.ch, y)));
+        k[GDRAG.ch] = Math.max(lim[0], Math.min(lim[1], gUnmapY(y)));
         el("ktInput").value = tt.toFixed(2);
         var sl = el({ x: "kxSlider", y: "kySlider", r: "krSlider", z: "kzSlider" }[GDRAG.ch]);
         sl.value = k[GDRAG.ch];
         el({ x: "kxVal", y: "kyVal", r: "krVal", z: "kzVal" }[GDRAG.ch]).textContent =
-          CHANNELS.filter(function (c) { return c.id === GDRAG.ch; })[0].fmt(k[GDRAG.ch]);
+          chanCfg(GDRAG.ch).fmt(k[GDRAG.ch]);
         renderTimeline();
       }
       return;
@@ -1918,31 +1961,11 @@ function attachGraphHandlers(cn, ch) {
     insertKeyAt(Math.round(((e.clientX - rect.left) / rect.width) * META.dur * 20) / 20);
   });
 }
-function buildGraphRows() {
-  var host = el("graphRows");
-  if (!host) return;
-  host.innerHTML = "";
-  CHANNELS.forEach(function (c) {
-    var row = document.createElement("div");
-    row.className = "grow";
-    var lab = document.createElement("span");
-    lab.className = "glab";
-    lab.textContent = c.label;
-    lab.style.color = c.color;
-    var rng = document.createElement("span");
-    rng.className = "grange";
-    rng.id = "gr_" + c.id;
-    var cn = document.createElement("canvas");
-    cn.id = "gc_" + c.id;
-    cn.style.cssText = "display:block;width:100%;height:56px;border:1px solid #1e293b;border-radius:6px;background:#0b1220;touch-action:none;cursor:crosshair";
-    row.appendChild(cn);
-    row.appendChild(lab);
-    row.appendChild(rng);
-    host.appendChild(row);
-    attachGraphHandlers(cn, c.id);
-  });
-}
-buildGraphRows();
+attachGraphHandlers(el("gCanvas"));
+el("gChannel").addEventListener("change", function (e) {
+  GCH = e.target.value;
+  drawAllGraphs();
+});
 window.addEventListener("resize", drawAllGraphs);
 
 /* ================= settings save/load ================= */
