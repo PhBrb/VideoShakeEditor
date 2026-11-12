@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.10. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.11. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -283,6 +283,19 @@
           to widen it. Several bands can be placed. The filters apply to the
           exported audio in both export paths; preview playback stays
           unfiltered.
+        </p>
+
+        <div class="row space" style="margin-top:14px">
+          <div class="cardtitle" style="margin:0">Audio overlays</div>
+          <label class="filebtn">Add audio from video<input id="ovFile" type="file" accept="video/*,audio/*" multiple></label>
+        </div>
+        <div id="ovList"></div>
+        <p class="note" style="margin:8px 0 0 0">
+          Extra audio extracted from other videos or audio files, mixed onto
+          the export. Start is in seconds on the source video's timeline and
+          shifts with the trim window. Band rejects apply only to the source
+          video's own audio, never to overlays. Preview playback includes
+          overlays; they are not part of the saved settings file.
         </p>
       </div>
 
@@ -952,9 +965,21 @@ vid.addEventListener("error", function () {
 vid.addEventListener("play", function () {
   el("playBtn").textContent = "Pause";
   if (audioCtx) audioCtx.resume();
+  if (EXPORTING) { scheduleOverlays(); return; }
+  if (activeOverlays().length) { ensurePreviewAudio(); scheduleOverlays(); }
 });
 vid.addEventListener("pause", function () {
   el("playBtn").textContent = "Play";
+  stopPreviewOverlays();
+});
+vid.addEventListener("seeked", function () {
+  if (!vid.paused && !EXPORTING) scheduleOverlays();
+});
+var ovLastT = 0;
+vid.addEventListener("timeupdate", function () {
+  // Loop wrap: reschedule overlays when playback jumps back to 0.
+  if (!vid.paused && vid.loop && vid.currentTime < ovLastT - 0.2) scheduleOverlays();
+  ovLastT = vid.currentTime;
 });
 
 el("playBtn").addEventListener("click", function () {
@@ -1214,6 +1239,13 @@ async function startExportRealtime() {
     el("expFill").style.width = "0%";
     EXPORTING = false;
     vid.loop = LOOP;
+    stopPreviewOverlays();
+    if (audioCtx && mediaSrc) {
+      // Restore the plain preview path so playback after an export is not
+      // left running through the band-reject chain.
+      try { mediaSrc.disconnect(); } catch (e) {}
+      try { mediaSrc.connect(audioCtx.destination); } catch (e) {}
+    }
     el("expBtn").style.display = "inline-block";
     el("expBtn").disabled = busy();
     if (DISCARD) { el("expMsg").textContent = "Export cancelled."; return; }
@@ -1298,6 +1330,9 @@ async function startExportAccurate() {
   var rgPre = trimRange();
   if (audioBuf) audioBuf = sliceAudio(audioBuf, rgPre.start, rgPre.end);
   audioBuf = await applyNotches(audioBuf);
+  // Overlays mix on top of the notched original audio; notches never touch
+  // the overlay tracks themselves.
+  audioBuf = await mixOverlays(audioBuf, rgPre.start);
 
   EXPORTING = true;
   DISCARD = false;
@@ -2368,6 +2403,226 @@ el("notchDel").addEventListener("click", function () {
 window.addEventListener("resize", drawSpectrum);
 drawSpectrum();
 refreshNotchEditor();
+
+/* ================= audio overlays ================= */
+// EXT: extra audio tracks extracted from other videos, mixed onto the
+// export on top of the (band-reject filtered) source audio.
+var EXT = [];
+var PV = { srcs: [] };
+
+function activeOverlays() {
+  return EXT.filter(function (t) { return t.on && t.buf; });
+}
+
+function ensurePreviewAudio() {
+  // Route the preview through WebAudio so overlays can be mixed in live.
+  // Once a MediaElementSource exists the element's audio only flows through
+  // this graph, so keep a direct (unfiltered) path to the speakers.
+  if (EXPORTING) return;
+  if (!audioCtx) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    mediaSrc = audioCtx.createMediaElementSource(vid);
+    audioDest = audioCtx.createMediaStreamDestination();
+  }
+  try { mediaSrc.disconnect(); } catch (e) {}
+  try { mediaSrc.connect(audioCtx.destination); } catch (e) {}
+}
+
+function stopPreviewOverlays() {
+  PV.srcs.forEach(function (s) {
+    try { s.stop(); } catch (e) {}
+    try { s.disconnect(); } catch (e) {}
+  });
+  PV.srcs = [];
+}
+
+function scheduleOverlays() {
+  // Schedule the enabled overlays relative to the current playhead. Tracks
+  // that should already be playing at this position are started mid-buffer.
+  // During a real-time export the same mix also feeds the recorder via
+  // audioDest, post-notch-merge so band rejects never touch overlays.
+  stopPreviewOverlays();
+  if (!audioCtx || vid.paused || !activeOverlays().length) return;
+  try { audioCtx.resume(); } catch (e) {}
+  var t0 = audioCtx.currentTime + 0.02;
+  var now = vid.currentTime;
+  activeOverlays().forEach(function (t) {
+    var delta = t.start - now;
+    var off = delta < 0 ? Math.min(t.dur, -delta) : 0;
+    if (off >= t.dur) return; // track already finished at this position
+    var when = delta > 0 ? t0 + delta : t0;
+    var src = audioCtx.createBufferSource();
+    src.buffer = t.buf;
+    var g = audioCtx.createGain();
+    g.gain.value = t.gain;
+    src.connect(g);
+    g.connect(audioCtx.destination);
+    if (EXPORTING && audioDest) g.connect(audioDest);
+    src.start(when, off);
+    PV.srcs.push(src);
+  });
+}
+
+async function mixOverlays(base, trimStart) {
+  // Offline mix for the frame-accurate path: base (already trimmed and
+  // notched) plays at 0, overlays are placed at start - trimStart. If the
+  // source video has no audio at all, a silent base of the export length is
+  // synthesized so overlays still make it into the file.
+  var ov = activeOverlays();
+  if (!ov.length) return base;
+  var sr = base ? base.sampleRate : 48000;
+  var chs = base ? base.numberOfChannels : 2;
+  var len = base ? base.length : Math.max(1, Math.ceil((trimRange().outDur || 0) * sr));
+  if (!len || len < 1) return base;
+  try {
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    var ctx = new OC(chs, len, sr);
+    if (base) {
+      var b = ctx.createBufferSource();
+      b.buffer = base;
+      b.connect(ctx.destination);
+      b.start(0);
+    }
+    var outDur = len / sr;
+    ov.forEach(function (t) {
+      var delta = t.start - trimStart;
+      var off = delta < 0 ? Math.min(t.dur, -delta) : 0;
+      if (off >= t.dur) return;
+      if (Math.max(0, delta) >= outDur) return; // starts past the export end
+      var src = ctx.createBufferSource();
+      src.buffer = t.buf;
+      var g = ctx.createGain();
+      g.gain.value = t.gain;
+      src.connect(g);
+      g.connect(ctx.destination);
+      src.start(Math.max(0, delta), off);
+    });
+    return await ctx.startRendering();
+  } catch (e) { return base; }
+}
+
+function renderOverlayList() {
+  var box = el("ovList");
+  box.innerHTML = "";
+  EXT.forEach(function (t, i) {
+    var row = document.createElement("div");
+    row.className = "row wrap2";
+    row.style.cssText = "margin:0 0 8px 0; align-items:center";
+    var chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = t.on;
+    chk.addEventListener("change", function (e) {
+      t.on = e.target.checked;
+      if (!vid.paused) scheduleOverlays();
+    });
+    var lab = document.createElement("label");
+    lab.className = "check";
+    lab.appendChild(chk);
+    var nm = document.createElement("span");
+    nm.className = "muted small";
+    nm.style.cssText = "max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap";
+    nm.textContent = t.name;
+    nm.title = t.name;
+    lab.appendChild(nm);
+    var startIn = document.createElement("input");
+    startIn.type = "number";
+    startIn.min = "0"; startIn.max = "10000"; startIn.step = "0.05";
+    startIn.value = t.start;
+    startIn.style.width = "78px";
+    startIn.disabled = !t.buf;
+    startIn.addEventListener("change", function (e) {
+      var v = parseFloat(e.target.value);
+      if (isNaN(v) || v < 0) v = 0;
+      t.start = Math.min(10000, v);
+      e.target.value = String(t.start);
+      if (!vid.paused) scheduleOverlays();
+    });
+    var startLab = document.createElement("label");
+    startLab.className = "check";
+    startLab.appendChild(document.createTextNode("Start "));
+    startLab.appendChild(startIn);
+    startLab.appendChild(document.createTextNode(" s"));
+    var gainIn = document.createElement("input");
+    gainIn.type = "number";
+    gainIn.min = "0"; gainIn.max = "4"; gainIn.step = "0.05";
+    gainIn.value = t.gain;
+    gainIn.style.width = "58px";
+    gainIn.disabled = !t.buf;
+    gainIn.addEventListener("change", function (e) {
+      var v = parseFloat(e.target.value);
+      if (isNaN(v) || v < 0) v = 1;
+      t.gain = Math.min(4, v);
+      e.target.value = String(t.gain);
+      if (!vid.paused) scheduleOverlays();
+    });
+    var gainLab = document.createElement("label");
+    gainLab.className = "check";
+    gainLab.appendChild(document.createTextNode("Vol "));
+    gainLab.appendChild(gainIn);
+    var del = document.createElement("button");
+    del.className = "btn secondary";
+    del.textContent = "Remove";
+    del.addEventListener("click", function () {
+      EXT.splice(EXT.indexOf(t), 1);
+      renderOverlayList();
+      stopPreviewOverlays();
+      if (!vid.paused) scheduleOverlays();
+    });
+    var info = document.createElement("span");
+    info.className = "muted small";
+    info.textContent = t.buf
+      ? fmtTime(t.dur) + " \u00b7 " + t.sr + " Hz"
+      : (t.msg || "decoding...");
+    row.appendChild(lab);
+    row.appendChild(startLab);
+    row.appendChild(gainLab);
+    row.appendChild(del);
+    row.appendChild(info);
+    box.appendChild(row);
+  });
+}
+
+function addOverlayFiles(files) {
+  var AC = window.AudioContext || window.webkitAudioContext;
+  Array.prototype.forEach.call(files, function (f) {
+    var t = { name: f.name, start: 0, gain: 1, on: true, buf: null, dur: 0, sr: 0, msg: "decoding..." };
+    EXT.push(t);
+    renderOverlayList();
+    var fr = new FileReader();
+    fr.onload = function () {
+      var ctx = new AC();
+      var done = function (buf) {
+        t.buf = buf;
+        t.dur = buf.duration;
+        t.sr = buf.sampleRate;
+        t.msg = "";
+        try { if (ctx.close) ctx.close(); } catch (e) {}
+        renderOverlayList();
+        if (!vid.paused) scheduleOverlays();
+      };
+      var fail = function () {
+        t.msg = "could not decode audio";
+        try { if (ctx.close) ctx.close(); } catch (e) {}
+        renderOverlayList();
+      };
+      try {
+        var p = ctx.decodeAudioData(fr.result);
+        if (p && p.then) p.then(done, fail); else fail();
+      } catch (e) { fail(); }
+    };
+    fr.onerror = function () {
+      t.msg = "could not read file";
+      renderOverlayList();
+    };
+    fr.readAsArrayBuffer(f);
+  });
+}
+
+el("ovFile").addEventListener("change", function (e) {
+  if (e.target.files && e.target.files.length) addOverlayFiles(e.target.files);
+  e.target.value = "";
+});
 
 /* ================= settings save/load ================= */
 function collectSettings() {
