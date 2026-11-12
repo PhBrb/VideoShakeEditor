@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camera Shake Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #020617; color: #e2e8f0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 20px; margin: 0; color: #fff; }
+  .muted { color: #94a3b8; }
+  .small { font-size: 12px; }
+  .mono { font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 16px; }
+  .cardtitle { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .row.space { justify-content: space-between; flex-wrap: wrap; margin-bottom: 12px; }
+  .row.wrap2 { flex-wrap: wrap; align-items: flex-end; }
+  .btn { background: #4f46e5; color: #fff; border: 0; border-radius: 8px; padding: 7px 12px; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .btn:hover:not(:disabled) { background: #6366f1; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn.secondary { background: #334155; }
+  .btn.secondary:hover:not(:disabled) { background: #475569; }
+  .btn.danger { background: #e11d48; }
+  .btn.danger:hover:not(:disabled) { background: #f43f5e; }
+  .btn.green { background: #059669; color: #fff; text-decoration: none; display: none; }
+  .filebtn { background: #334155; color: #e2e8f0; border: 0; border-radius: 8px; padding: 7px 12px; font-size: 13px; font-weight: 500; cursor: pointer; display: inline-block; }
+  .filebtn:hover { background: #475569; }
+  input[type=file] { display: none; }
+  .check { font-size: 12px; color: #94a3b8; display: flex; gap: 6px; align-items: center; }
+  .status { font-size: 12px; color: #fbbf24; margin-bottom: 10px; display: none; }
+  .status.show { display: block; }
+  .preview { border-radius: 8px; overflow: hidden; background: #000; display: flex; justify-content: center; }
+  .preview canvas { max-width: 100%; max-height: 62vh; width: auto; height: auto; display: block; }
+  select, input[type=number] { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 6px 8px; color: #e2e8f0; font-size: 13px; }
+  select:disabled, input:disabled { opacity: 0.5; }
+  input[type=range] { accent-color: #6366f1; width: 100%; }
+  .lab { font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px; }
+  .slider { display: block; margin-bottom: 10px; }
+  .slrow { display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-bottom: 3px; }
+  .slrow .val { color: #cbd5e1; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; border-radius: 999px; background: #1e293b; overflow: hidden; margin-top: 10px; }
+  .bar > div { height: 100%; background: #6366f1; width: 0; transition: width .15s; }
+  .msg { font-size: 12px; color: #94a3b8; margin-top: 8px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab { flex: 1; padding: 7px 10px; border-radius: 8px; border: 0; font-size: 13px; font-weight: 500; cursor: pointer; background: #1e293b; color: #cbd5e1; }
+  .tab.on { background: #4f46e5; color: #fff; }
+  .preset { background: #1e293b; border: 0; color: #cbd5e1; border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 500; cursor: pointer; margin: 0 6px 6px 0; }
+  .preset:hover:not(:disabled) { background: #334155; }
+  .preset:disabled, .preset:disabled:hover { opacity: .4; cursor: default; }
+  .note { font-size: 12px; color: #64748b; line-height: 1.55; }
+  .flex1 { flex: 1; }
+  .track { position: relative; height: 72px; background: #0b1220; border: 1px solid #1e293b; border-radius: 8px; cursor: crosshair; user-select: none; -webkit-user-select: none; touch-action: none; overflow: hidden; margin-top: 4px; }
+  .track .tick { position: absolute; top: 0; bottom: 20px; border-left: 1px solid #293548; }
+  .track .ticklab { position: absolute; bottom: 3px; font-size: 9px; color: #64748b; transform: translateX(3px); white-space: nowrap; pointer-events: none; }
+  .track .playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: #f43f5e; left: 0; pointer-events: none; z-index: 2; }
+  .track .key { position: absolute; top: 16px; width: 11px; height: 11px; background: #6366f1; border: 1px solid #c7d2fe; transform: translateX(-50%) rotate(45deg); cursor: grab; border-radius: 2px; z-index: 3; }
+  .track .key.sel { background: #f43f5e; border-color: #fecdd3; cursor: grabbing; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Camera Shake Studio</h1>
+    <span class="muted small">Standalone version. Runs entirely in your browser, nothing is uploaded.</span>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <div class="card">
+        <div class="row space">
+          <label class="filebtn">Choose source video<input id="srcFile" type="file" accept="video/*"></label>
+          <span id="srcMeta" class="muted small"></span>
+          <label class="check"><input id="shakeOn" type="checkbox" checked> Shake on (uncheck to compare original)</label>
+        </div>
+        <div id="srcStatus" class="status"></div>
+        <div class="preview"><canvas id="cv" width="640" height="360"></canvas></div>
+        <video id="vid" playsinline preload="auto" style="display:none"></video>
+        <video id="refVid" playsinline muted preload="auto" style="display:none"></video>
+        <div class="row" id="playRow" style="display:none; margin-top:12px">
+          <button id="playBtn" class="btn secondary">Play</button>
+          <label class="check"><input id="loopChk" type="checkbox" checked> Loop</label>
+          <input id="scrub" type="range" min="0" max="1" step="0.01" value="0" style="flex:1">
+          <span id="timeLbl" class="muted small mono" style="width:90px; text-align:right">0:00 / 0:00</span>
+        </div>
+      </div>
+
+      <div class="card" id="moveCard" style="display:none">
+        <div class="row space">
+          <div class="cardtitle" style="margin:0">Camera move (keyframes)</div>
+          <label class="check"><input id="moveOn" type="checkbox" checked> Move on</label>
+        </div>
+        <p class="note" style="margin:8px 0 4px 0">
+          Intentional camera movement layered on top of the shake: keyframe pan
+          (X/Y) and roll over time. Click the track to seek, drag the diamonds
+          to move keyframes in time. Values ease in and out between keys.
+          Extracting a reference video writes its slow intended movement here
+          as keyframes and keeps only the residual shake as the reference layer.
+        </p>
+        <div id="track" class="track">
+          <div id="ruler"></div>
+          <div id="playhead" class="playhead"></div>
+          <div id="keysBox"></div>
+        </div>
+        <div class="row wrap2" style="margin-top:10px">
+          <button id="addKey" class="btn">Add key at playhead</button>
+          <button id="delKey" class="btn secondary" disabled>Delete key</button>
+          <button id="prevKey" class="btn secondary">Prev key</button>
+          <button id="nextKey" class="btn secondary">Next key</button>
+          <button id="clearKeys" class="btn secondary">Clear all</button>
+        </div>
+        <div id="keyEditor" style="display:none; margin-top:10px">
+          <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-start">
+            <label class="slider" style="flex:1; min-width:150px; margin:0">
+              <div class="slrow"><span>Pan X</span><span class="val" id="kxVal">0.0%</span></div>
+              <input id="kxSlider" type="range" min="-150" max="150" step="0.1" value="0">
+            </label>
+            <label class="slider" style="flex:1; min-width:150px; margin:0">
+              <div class="slrow"><span>Pan Y</span><span class="val" id="kyVal">0.0%</span></div>
+              <input id="kySlider" type="range" min="-150" max="150" step="0.1" value="0">
+            </label>
+            <label class="slider" style="flex:1; min-width:150px; margin:0">
+              <div class="slrow"><span>Roll</span><span class="val" id="krVal">0.0&#176;</span></div>
+              <input id="krSlider" type="range" min="-90" max="90" step="0.1" value="0">
+            </label>
+            <label style="min-width:80px"><span class="lab">Key time (s)</span>
+              <input id="ktInput" type="number" min="0" step="0.05" style="width:100%"></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardtitle">Export</div>
+        <div class="row wrap2">
+          <span><span class="lab">Frame rate</span>
+            <select id="expFps">
+              <option value="24">24 fps</option>
+              <option value="25">25 fps</option>
+              <option value="30" selected>30 fps</option>
+              <option value="60">60 fps</option>
+            </select></span>
+          <span><span class="lab">Quality</span>
+            <select id="expQ">
+              <option value="8000000">8 Mbps</option>
+              <option value="16000000" selected>16 Mbps</option>
+              <option value="25000000">25 Mbps</option>
+            </select></span>
+          <button id="expBtn" class="btn" disabled>Export shaken video</button>
+          <button id="cancelBtn" class="btn danger" style="display:none">Cancel</button>
+          <a id="dlLink" class="btn green" download="shaken_video.mp4">Download</a>
+        </div>
+        <div id="expBar" class="bar"><div id="expFill"></div></div>
+        <div id="expMsg" class="msg"></div>
+        <p class="note" style="margin:8px 0 0 0">
+          Frame-accurate export: every frame is rendered at its exact
+          timestamp, so no frame is dropped or duplicated, regardless of
+          screen refresh rate or machine load. For the smoothest result,
+          match the frame rate to your source clip (e.g. 60 fps source,
+          60 fps export). Runs slower than real time. Falls back to
+          real-time recording in browsers without WebCodecs.
+        </p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <div id="procPanel">
+          <div id="presetRow" style="margin-bottom:12px"></div>
+          <div id="slidersBox"></div>
+          <div class="row" style="margin-top:4px">
+            <span style="flex:1"><span class="lab">Seed</span>
+              <input id="seed" type="number" value="1337" style="width:100%"></span>
+            <button id="seedBtn" class="btn secondary" style="margin-top:14px">Randomize</button>
+          </div>
+        </div>
+
+        <div id="refPanel">
+          <div class="cardtitle" style="margin-top:16px">Reference shake (adds on top)</div>
+          <p class="note" style="margin-top:0">
+            Load a reference clip that was actually handheld. The full camera
+            motion is extracted frame by frame: the slow intended movement
+            becomes camera-move keyframes (visible and editable in the camera
+            move timeline), and the residual shake is added to the procedural
+            shake. Set Procedural intensity to 0 for reference-only motion, or
+            Transfer intensity to 0 to keep only the intended movement.
+          </p>
+          <label class="filebtn">Choose reference clip<input id="refFile" type="file" accept="video/*"></label>
+          <div id="refName" class="msg"></div>
+          <div id="refStatus" class="status"></div>
+          <button id="anaBtn" class="btn" disabled style="margin-top:10px">Load a reference first</button>
+          <div id="anaBar" class="bar"><div id="anaFill"></div></div>
+          <div id="anaMsg" class="msg"></div>
+          <label class="slider" style="margin-top:10px">
+            <div class="slrow"><span>Transfer intensity</span><span class="val" id="tsVal">1.00</span></div>
+            <input id="tsSlider" type="range" min="0" max="2" step="0.05" value="1">
+          </label>
+          <div id="refHint" class="note" style="color:#fbbf24">
+            No reference shake loaded yet: only the procedural shake is
+            active. Analyze a reference clip, or load a settings file that
+            contains one.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardtitle">Framing</div>
+        <label class="check" style="margin-bottom:10px">
+          <input id="zoomAuto" type="checkbox" checked>
+          <span id="zoomAutoLbl">Auto safety zoom (1.000x, no black borders)</span>
+        </label>
+        <label class="slider">
+          <div class="slrow"><span>Manual zoom</span><span class="val" id="zmVal">1.08</span></div>
+          <input id="zmSlider" type="range" min="1" max="1.5" step="0.005" value="1.08" disabled>
+        </label>
+        <p class="note" style="margin:0">
+          The shake shifts and rotates the frame, so the source is scaled up to
+          keep edges covered. Auto mode computes the tightest safe zoom over the
+          whole clip.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="cardtitle">Settings</div>
+        <div class="row wrap2">
+          <button id="saveBtn" class="btn secondary">Save settings</button>
+          <label class="filebtn">Load settings<input id="loadFile" type="file" accept="application/json,.json"></label>
+        </div>
+        <div id="setMsg" class="msg"></div>
+        <p class="note" style="margin:0">
+          Saves all sliders, seed, framing, export options, camera-move
+          keyframes, and the shake extracted from the reference video (if
+          any) as a JSON file. Load it later to restore the exact same
+          motion, including the reference trajectory.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="cardtitle">HEVC / H.265 converter</div>
+        <p class="note" style="margin-top:0">
+          Converts an HEVC phone clip to H.264 MP4 using a WebAssembly build of
+          ffmpeg, entirely in the browser. Downloads ~32 MB once, then the result
+          is loaded as the source video automatically. Audio is converted to AAC.
+          Output is capped at 1080p. Keep the tab open while it runs.
+        </p>
+        <button id="convLoadBtn" class="btn">Load converter</button>
+        <button id="convBtn" class="btn" style="display:none" disabled>Convert source to H.264</button>
+        <div id="convBar" class="bar"><div id="convFill"></div></div>
+        <div id="convMsg" class="msg"></div>
+        <a id="convDl" class="btn green" download="converted_h264.mp4">Download converted MP4</a>
+      </div>
+
+      <div class="card">
+        <p class="note" style="margin:0">
+          Works in Chrome, Edge, and Firefox. Export renders frame by frame
+          at exact timestamps into MP4 (H.264) with the original audio where
+          WebCodecs is available; otherwise it records in real time and
+          outputs WebM. If a source file fails to load, your browser cannot
+          decode its codec: run it through the converter panel above.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= utilities ================= */
+function mulberry32(a) {
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function Simplex(rnd) {
+  var p = new Uint8Array(256);
+  for (var i = 0; i < 256; i++) p[i] = i;
+  for (var i2 = 255; i2 > 0; i2--) {
+    var j = Math.floor(rnd() * (i2 + 1));
+    var tmp = p[i2]; p[i2] = p[j]; p[j] = tmp;
+  }
+  this.perm = new Uint8Array(512);
+  for (var k = 0; k < 512; k++) this.perm[k] = p[k & 255];
+  this.grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+}
+Simplex.prototype.noise = function (xin, yin) {
+  var F2 = 0.5 * (Math.sqrt(3) - 1), G2 = (3 - Math.sqrt(3)) / 6;
+  var n0 = 0, n1 = 0, n2 = 0;
+  var s = (xin + yin) * F2;
+  var i = Math.floor(xin + s), j = Math.floor(yin + s);
+  var t = (i + j) * G2;
+  var x0 = xin - (i - t), y0 = yin - (j - t);
+  var i1, j1;
+  if (x0 > y0) { i1 = 1; j1 = 0; } else { i1 = 0; j1 = 1; }
+  var x1 = x0 - i1 + G2, y1 = y0 - j1 + G2;
+  var x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+  var ii = i & 255, jj = j & 255;
+  var t0 = 0.5 - x0 * x0 - y0 * y0;
+  if (t0 >= 0) { var g0 = this.grad[this.perm[ii + this.perm[jj]] & 7]; t0 *= t0; n0 = t0 * t0 * (g0[0] * x0 + g0[1] * y0); }
+  var t1 = 0.5 - x1 * x1 - y1 * y1;
+  if (t1 >= 0) { var g1 = this.grad[this.perm[ii + i1 + this.perm[jj + j1]] & 7]; t1 *= t1; n1 = t1 * t1 * (g1[0] * x1 + g1[1] * y1); }
+  var t2 = 0.5 - x2 * x2 - y2 * y2;
+  if (t2 >= 0) { var g2 = this.grad[this.perm[ii + 1 + this.perm[jj + 1]] & 7]; t2 *= t2; n2 = t2 * t2 * (g2[0] * x2 + g2[1] * y2); }
+  return 70 * (n0 + n1 + n2);
+};
+
+function fbm(n, x, y, oct) {
+  var a = 0.5, f = 1, s = 0, norm = 0;
+  for (var k = 0; k < oct; k++) {
+    s += a * n.noise(x * f, y * f);
+    norm += a; a *= 0.5; f *= 2;
+  }
+  return s / norm;
+}
+
+function fmtTime(t) {
+  if (!isFinite(t)) t = 0;
+  var m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return m + ":" + String(s).padStart(2, "0");
+}
+function fmtSize(b) {
+  if (b > 1048576) return (b / 1048576).toFixed(1) + " MB";
+  return Math.round(b / 1024) + " KB";
+}
+
+/* ================= procedural shake engine ================= */
+function buildProcedural(seed, p) {
+  var rnd = mulberry32(seed);
+  var mk = function () { return new Simplex(rnd); };
+  var nDX = mk(), nDY = mk(), nSX = mk(), nSY = mk(), nTX = mk(), nTY = mk();
+  var nCX = mk(), nCY = mk(), nR = mk(), nZ = mk(), nB = mk();
+  var nWX = mk(), nWY = mk(), nEX = mk(), nEY = mk(), nES = mk(), nET = mk();
+
+  // Deterministic pseudo-random in [0,1) for transient event placement.
+  function hash1(n) {
+    var x = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453;
+    return x - Math.floor(x);
+  }
+
+  // Slow wandering loudness. Real handheld motion is not stationary: the
+  // operator fatigues, corrects, and re-grips, so each channel group swells
+  // and fades over a few seconds instead of ticking at a constant rate.
+  function env(n, t, y) {
+    var v = fbm(n, t * 0.085, y, 3) * 0.5 + 0.5;
+    return 0.4 + 1.2 * v;
+  }
+
+  // Sparse transient bumps (re-grip, stumble, nudge): a damped ~8 Hz spring
+  // response to a random impulse. Pure function of (t, seed), so preview,
+  // scrub, and export all agree.
+  function jerks(t, ch) {
+    var Tavg = 3.2, amp = 0.0009, s = 0;
+    var k0 = Math.floor((t - 1.2) / Tavg);
+    var k1 = Math.floor(t / Tavg) + 1;
+    for (var k = k0; k <= k1; k++) {
+      if (hash1(k * 2.3 + 0.7 + ch * 97) > 0.45) continue;
+      var tt = (k + hash1(k * 5.1 + ch * 31 + 7)) * Tavg;
+      var dt = t - tt;
+      if (dt < 0) continue;
+      var dir = hash1(k * 7.7 + ch * 13 + 3) > 0.5 ? 1 : -1;
+      var a = amp * (0.5 + hash1(k * 3.3 + ch + 11));
+      s += dir * a * Math.exp(-dt / 0.09) * Math.sin(2 * Math.PI * 8 * dt);
+    }
+    return s;
+  }
+
+  function lowBase(t) {
+    // Phase warps: additive slow noise offsets destroy the fixed tempo of
+    // each channel, so no single oscillation period repeats visibly.
+    return {
+      x:
+        fbm(nDX, t * 0.13 + 0.8 * nWX.noise(t * 0.04, 2.2), 0.5, 3) * 0.013 * p.drift * env(nEX, t, 1.3) +
+        fbm(nSX, t * 0.85 + 0.9 * nWX.noise(t * 0.25, 4.4), 3.1, 2) * 0.0038 * p.sway * env(nES, t, 5.9) -
+        fbm(nCX, (t - 0.42 - 0.25 * nWX.noise(t * 0.08, 9.1)) * 0.42, 2.2, 2) * 0.0055 * p.drift,
+      y:
+        fbm(nDY, t * 0.11 + 0.7 * nWY.noise(t * 0.037, 7.7), 7.3, 3) * 0.011 * p.drift * env(nEY, t, 4.1) +
+        fbm(nSY, t * 0.95 + 0.9 * nWY.noise(t * 0.27, 3.7), 5.7, 2) * 0.0030 * p.sway * env(nES, t, 2.6) -
+        fbm(nCY, (t - 0.46 - 0.25 * nWY.noise(t * 0.077, 1.9)) * 0.4, 9.4, 2) * 0.0050 * p.drift
+    };
+  }
+
+  return {
+    kind: "procedural",
+    disp: function (t, w, h) {
+      var L = lowBase(t);
+      // Warbling tremor rate, roughly 4-10 Hz, with octave detail to ~27 Hz.
+      var tx = fbm(nTX, t * 6.8 + 2.8 * nWX.noise(t * 0.35, 6.6), 1.7, 3) * 0.0016 * p.tremor * env(nET, t, 8.1);
+      var ty = fbm(nTY, t * 6.3 + 2.8 * nWY.noise(t * 0.33, 2.8), 4.2, 3) * 0.0016 * p.tremor * env(nET, t, 0.7);
+      // Gait bounce with jittered stride: phase noise breaks the exact
+      // period, the envelope varies the effort of each step.
+      var gp = 2 * Math.PI * 1.8 * t + 2.2 * fbm(nB, t * 0.22, 3.3, 2);
+      var foot = Math.pow(Math.max(0, Math.sin(gp)), 3)
+               - 0.55 * Math.pow(Math.max(0, -Math.sin(gp)), 2);
+      var gaitEnv = 0.5 + 0.5 * (fbm(nB, t * 0.11, 8.8, 2) * 0.5 + 0.5);
+      var bounce = foot * 0.0012 * p.bounce * gaitEnv;
+      var x = (L.x + tx + jerks(t, 0)) * p.intensity;
+      var y = (L.y + ty - bounce + jerks(t, 1)) * p.intensity;
+      var Lp = lowBase(t - 1 / 30);
+      var vx = (L.x - Lp.x) * 30;
+      var roll = (fbm(nR, t * 0.6, 1.1, 3) * 0.28 + vx * 35) * p.rotation * (Math.PI / 180);
+      roll = Math.max(-0.06, Math.min(0.06, roll));
+      var zb = 1 + fbm(nZ, t * 0.31, 6.6, 2) * 0.0035 * p.breath;
+      var m = Math.min(w, h);
+      return { dx: x * m, dy: y * m, roll: roll, zb: zb };
+    }
+  };
+}
+
+
+/* ================= shake transfer ================= */
+function seekTo(v, t) {
+  return new Promise(function (res) {
+    var h = function () { v.removeEventListener("seeked", h); res(); };
+    v.addEventListener("seeked", h);
+    var d = v.duration || 0;
+    v.currentTime = Math.max(0, Math.min(t, d - 1e-3));
+  });
+}
+
+async function analyzeReference(v, onP) {
+  var W1 = 320, H1 = Math.max(8, Math.round(v.videoHeight * W1 / v.videoWidth));
+  var W0 = 160, H0 = Math.max(8, Math.round(v.videoHeight * W0 / v.videoWidth));
+  var c1 = document.createElement("canvas"); c1.width = W1; c1.height = H1;
+  var c0 = document.createElement("canvas"); c0.width = W0; c0.height = H0;
+  var x1 = c1.getContext("2d"), x0 = c0.getContext("2d");
+
+  var P0 = Math.max(16, Math.min(44, Math.floor(Math.min(W0, H0) * 0.5) - 4));
+  var P1 = P0 * 2;
+  var R = Math.min(10, Math.floor(Math.min(W0, H0) * 0.25));
+
+  function toGray(img, W, H) {
+    var d = img.data, g = new Float32Array(W * H), k = 0;
+    for (var i = 0; i < d.length; i += 4) g[k++] = (d[i] * 3 + d[i + 1] * 4 + d[i + 2]) * 0.125;
+    return g;
+  }
+
+  function ssd(prev, W, H, cx, cy, P, cur, dx, dy, ca, sa) {
+    var e = 0, half = P >> 1;
+    for (var u = -half; u < half; u++) {
+      var sx0 = ca * u, sy0 = sa * u;
+      var txb = (cx + dx + u) | 0;
+      for (var vv = -half; vv < half; vv++) {
+        var sx = (cx + sx0 - sa * vv) | 0;
+        var sy = (cy + sy0 + ca * vv) | 0;
+        if (sx < 0 || sy < 0 || sx >= W || sy >= H) { e += 1000; continue; }
+        var tyy = (cy + dy + vv) | 0;
+        if (txb < 0 || tyy < 0 || txb >= W || tyy >= H) { e += 1000; continue; }
+        var dd = prev[sy * W + sx] - cur[tyy * W + txb];
+        e += dd * dd;
+      }
+    }
+    return e;
+  }
+
+  function match(g0p, g0c, g1p, g1c) {
+    var cx0 = W0 >> 1, cy0 = H0 >> 1;
+    var be = Infinity, bdx = 0, bdy = 0, ba = 0;
+    for (var ai = -2; ai <= 2; ai++) {
+      var a = ai * (Math.PI / 180), ca = Math.cos(a), sa = Math.sin(a);
+      for (var dy = -R; dy <= R; dy++) {
+        for (var dx = -R; dx <= R; dx++) {
+          var e = ssd(g0p, W0, H0, cx0, cy0, P0, g0c, dx, dy, ca, sa);
+          if (e < be) { be = e; bdx = dx; bdy = dy; ba = a; }
+        }
+      }
+    }
+    var cx1 = W1 >> 1, cy1 = H1 >> 1;
+    var b1e = Infinity, b1dx = bdx * 2, b1dy = bdy * 2, b1a = ba;
+    var bx = Math.round(bdx * 2), by = Math.round(bdy * 2);
+    var cands = [ba - 0.0044, ba, ba + 0.0044];
+    for (var ci = 0; ci < cands.length; ci++) {
+      var a1 = cands[ci], ca1 = Math.cos(a1), sa1 = Math.sin(a1);
+      for (var dy1 = by - 3; dy1 <= by + 3; dy1++) {
+        for (var dx1 = bx - 3; dx1 <= bx + 3; dx1++) {
+          var e1 = ssd(g1p, W1, H1, cx1, cy1, P1, g1c, dx1, dy1, ca1, sa1);
+          if (e1 < b1e) { b1e = e1; b1dx = dx1; b1dy = dy1; b1a = a1; }
+        }
+      }
+    }
+    var sc = v.videoWidth / W1;
+    return { dx: b1dx * sc, dy: b1dy * sc, a: b1a };
+  }
+
+  var fps = 30;
+  var N = Math.max(2, Math.min(Math.floor((v.duration || 1) * fps), 1800));
+  var traj = new Float32Array(N * 3);
+  var cx = 0, cy = 0, cr = 0;
+  var g0p = null, g1p = null;
+
+  for (var i = 0; i < N; i++) {
+    await seekTo(v, i / fps + 1e-4);
+    x1.drawImage(v, 0, 0, W1, H1);
+    x0.drawImage(v, 0, 0, W0, H0);
+    var g1c = toGray(x1.getImageData(0, 0, W1, H1), W1, H1);
+    var g0c = toGray(x0.getImageData(0, 0, W0, H0), W0, H0);
+    if (g0p && g1p) {
+      var m = match(g0p, g0c, g1p, g1c);
+      cx += m.dx; cy += m.dy; cr += m.a;
+    }
+    traj[i * 3] = cx;
+    traj[i * 3 + 1] = cy;
+    traj[i * 3 + 2] = cr;
+    g0p = g0c; g1p = g1c;
+    if (i % 4 === 0) {
+      onP(i / N);
+      await new Promise(function (r) { setTimeout(r, 0); });
+    }
+  }
+  onP(1);
+
+  // Full cumulative motion is kept: the split into intended movement
+  // (camera-move keyframes) and residual shake happens in decomposeRef().
+  return { arr: traj, N: N, fps: fps, w: v.videoWidth, h: v.videoHeight };
+}
+
+// Split the reference motion into the slow intended movement, sampled as
+// camera-move keyframes every 10% of the duration, and the residual shake.
+// The stored trajectory is (raw - spline), so residual + keyframes
+// reproduce the full reference motion exactly at transfer intensity 1.
+function decomposeRef(tr, targetDur) {
+  var N = tr.N, fps = tr.fps, rm = Math.min(tr.w, tr.h) || 1;
+  if (N < 2 || !(fps > 0) || !(targetDur > 0)) return { keys: [], traj: tr };
+  // 1) moving average of the raw motion = low-frequency band
+  var M = Math.max(3, Math.round(1.5 * fps));
+  var smooth = new Float32Array(N * 3);
+  for (var c = 0; c < 3; c++) {
+    var vals = new Float32Array(N);
+    for (var i = 0; i < N; i++) vals[i] = tr.arr[i * 3 + c];
+    var pre = new Float64Array(N + 1);
+    for (var i2 = 0; i2 < N; i2++) pre[i2 + 1] = pre[i2] + vals[i2];
+    for (var i3 = 0; i3 < N; i3++) {
+      var lo = Math.max(0, i3 - (M >> 1));
+      var hi = Math.min(N - 1, i3 + (M >> 1));
+      smooth[i3 * 3 + c] = (pre[hi + 1] - pre[lo]) / (hi - lo + 1);
+    }
+  }
+  // 2) sample the smoothed curve every 10% of the duration -> keyframes
+  //    (x/y in percent of the short side, roll in degrees, t on the
+  //    target timeline so the timeline editor shows them directly)
+  var SEG = 10;
+  var keys = [];
+  for (var s = 0; s <= SEG; s++) {
+    var idx = Math.round((s / SEG) * (N - 1));
+    keys.push({
+      t: (s / SEG) * targetDur,
+      x: (smooth[idx * 3] / rm) * 100,
+      y: (smooth[idx * 3 + 1] / rm) * 100,
+      r: (smooth[idx * 3 + 2] * 180) / Math.PI
+    });
+  }
+  // 3) subtract the keyframe spline from the raw motion -> residual shake.
+  //    The spline uses the same smoothstep interpolation as moveAt(), so
+  //    adding the keyframes back during playback cancels the subtraction.
+  var res = new Float32Array(tr.arr);
+  for (var i4 = 0; i4 < N; i4++) {
+    var f = (i4 / (N - 1)) * SEG;
+    var k0 = Math.min(SEG - 1, Math.floor(f));
+    var a = keys[k0], b = keys[k0 + 1];
+    var u = f - k0, sp = u * u * (3 - 2 * u);
+    res[i4 * 3] -= (rm / 100) * (a.x + (b.x - a.x) * sp);
+    res[i4 * 3 + 1] -= (rm / 100) * (a.y + (b.y - a.y) * sp);
+    res[i4 * 3 + 2] -= ((a.r + (b.r - a.r) * sp) * Math.PI) / 180;
+  }
+  return { keys: keys, traj: { arr: res, N: N, fps: fps, w: tr.w, h: tr.h } };
+}
+
+function buildTransfer(tr, intensity) {
+  var arr = tr.arr, N = tr.N, fps = tr.fps, rm = Math.min(tr.w, tr.h);
+  return {
+    kind: "transfer",
+    disp: function (t, w, h) {
+      // Ping-pong tiling: a reference shorter than the target is traversed
+      // forward, then backward, alternating, so neither the loop seam nor
+      // the always-repeating direction stays visible.
+      var total = (t * fps) / N;
+      var tile = Math.floor(total);
+      var frac = total - tile;
+      var ft = (tile % 2 === 0) ? frac * N : (1 - frac) * N;
+      ft = Math.max(0, Math.min(N - 1, ft));
+      var i = Math.floor(ft), j = Math.min(N - 1, i + 1), u = ft - i;
+      var x = arr[i * 3] + (arr[j * 3] - arr[i * 3]) * u;
+      var y = arr[i * 3 + 1] + (arr[j * 3 + 1] - arr[i * 3 + 1]) * u;
+      var r = arr[i * 3 + 2] + (arr[j * 3 + 2] - arr[i * 3 + 2]) * u;
+      var m = Math.min(w, h);
+      var s = (m / rm) * intensity;
+      return { dx: x * s, dy: y * s, roll: r * intensity, zb: 1 };
+    }
+  };
+}
+
+
+/* ================= state ================= */
+var vid = document.getElementById("vid");
+var refVid = document.getElementById("refVid");
+var cv = document.getElementById("cv");
+var el = function (id) { return document.getElementById(id); };
+
+var META = null, ENGINE = null;
+var PARAMS = { intensity: 1, drift: 1, sway: 1, tremor: 1, rotation: 1, bounce: 0, breath: 1 };
+var SEED = 1337, TRAJ = null, TRANSFER_SCALE = 1;
+var SHAKE_ON = true, ZOOM_AUTO = true, MANUAL_ZOOM = 1.08, AUTO_ZOOM = 1;
+var EXPORT_FPS = 30, QUALITY = 16000000;
+var EXPORTING = false, ANALYZING = false, CONV_BUSY = false;
+var REC = null, CHUNKS = [], DISCARD = false;
+var audioCtx = null, audioDest = null;
+var RESULT_URL = null, CONV_URL = "";
+var FFMPEG = null, CONV_READY = false, CONV_LOADING = false;
+var sourceFile = null, pendingName = "";
+var scrubbing = false, refReady = false;
+var LOOP = true, loopCount = 0, lastFrameT = 0;
+
+var PRESETS = [
+  ["Subtle handheld", { intensity: 0.55, drift: 0.8, sway: 0.7, tremor: 0.8, rotation: 0.7, bounce: 0, breath: 0.8 }],
+  ["Documentary", { intensity: 1, drift: 1, sway: 1, tremor: 1, rotation: 1, bounce: 0, breath: 1 }],
+  ["Bumpy walk", { intensity: 1.35, drift: 0.7, sway: 1.1, tremor: 1.5, rotation: 1.3, bounce: 1.6, breath: 1.1 }],
+  ["Action run", { intensity: 1.8, drift: 0.6, sway: 1.4, tremor: 1.8, rotation: 1.6, bounce: 0.7, breath: 1.2 }]
+];
+
+var PDEFS = [
+  ["intensity", "Intensity"],
+  ["drift", "Drift (slow wander)"],
+  ["sway", "Sway"],
+  ["tremor", "Tremor (4-12 Hz)"],
+  ["rotation", "Roll (rotation)"],
+  ["bounce", "Footstep bounce"],
+  ["breath", "Zoom breathing"]
+];
+
+function busy() { return EXPORTING || ANALYZING || CONV_BUSY; }
+function curScale() { return ZOOM_AUTO ? AUTO_ZOOM : MANUAL_ZOOM; }
+
+function setStatus(id, text) {
+  var e = el(id);
+  if (text) { e.textContent = text; e.classList.add("show"); }
+  else e.classList.remove("show");
+}
+
+/* ================= engine management ================= */
+function rebuildEngine() {
+  // Procedural shake is always active; the reference shake, when loaded,
+  // is added on top of it (overlapping mix, not an either/or mode).
+  var proc = buildProcedural(SEED, PARAMS);
+  if (TRAJ && TRANSFER_SCALE > 0) {
+    var tr = buildTransfer(TRAJ, TRANSFER_SCALE);
+    ENGINE = {
+      kind: "mixed",
+      disp: function (t, w, h) {
+        var a = proc.disp(t, w, h);
+        var b = tr.disp(t, w, h);
+        return { dx: a.dx + b.dx, dy: a.dy + b.dy, roll: a.roll + b.roll, zb: a.zb * b.zb };
+      }
+    };
+  } else {
+    ENGINE = proc;
+  }
+  recomputeAutoZoom();
+}
+
+function recomputeAutoZoom() {
+  if (!ENGINE || !META || !isFinite(META.dur) || META.dur <= 0) { AUTO_ZOOM = 1; }
+  else {
+    var w = META.w, h = META.h, need = 1;
+    var span = META.dur;
+    for (var t = 0; t <= span; t += 0.04) {
+      var d = combinedDisp(t, META.dur > 0 ? t % META.dur : 0, w, h);
+      var ca = Math.abs(Math.cos(d.roll)), sa = Math.abs(Math.sin(d.roll));
+      var rx = (ca * w) / 2 + (sa * h) / 2;
+      var ry = (sa * w) / 2 + (ca * h) / 2;
+      var z = Math.min(1, d.zb);
+      need = Math.max(need, (w / 2 + Math.abs(d.dx)) / rx / z, (h / 2 + Math.abs(d.dy)) / ry / z);
+    }
+    AUTO_ZOOM = Math.min(1.8, need * 1.02);
+  }
+  el("zoomAutoLbl").textContent =
+    "Auto safety zoom (" + AUTO_ZOOM.toFixed(3) + "x, no black borders)";
+}
+
+/* ================= drawing ================= */
+function draw() {
+  if (!vid.videoWidth) return;
+  var w = vid.videoWidth, h = vid.videoHeight;
+  if (cv.width !== w) { cv.width = w; cv.height = h; }
+  var ctx = cv.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  if (!SHAKE_ON || !ENGINE) { ctx.drawImage(vid, 0, 0, w, h); return; }
+  // Shake time = clip time: every preview loop replays the first pass
+  // exactly, and the looped preview matches the export.
+  var T = vid.currentTime;
+  var d = combinedDisp(T, vid.currentTime, w, h);
+  var s = curScale() * d.zb;
+  ctx.translate(w / 2 + d.dx, h / 2 + d.dy);
+  ctx.rotate(d.roll);
+  ctx.scale(s, s);
+  ctx.drawImage(vid, -w / 2, -h / 2, w, h);
+}
+
+var lastT = -1;
+function loop() {
+  if (vid.readyState >= 2) {
+    if (!vid.paused && lastFrameT > vid.duration - 0.8 && vid.currentTime < 0.5 && lastFrameT > vid.currentTime + 0.5) {
+      loopCount++;
+    }
+    lastFrameT = vid.currentTime;
+    draw();
+    if (Math.abs(vid.currentTime - lastT) > 0.06) {
+      lastT = vid.currentTime;
+      el("timeLbl").textContent = fmtTime(vid.currentTime) + " / " + fmtTime(META ? META.dur : 0);
+      if (!scrubbing && META) el("scrub").value = Math.min(vid.currentTime, META.dur);
+      if (META && META.dur > 0) el("playhead").style.left = (Math.min(vid.currentTime / META.dur, 1) * 100) + "%";
+    }
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ================= source loading ================= */
+el("srcFile").addEventListener("change", function (e) {
+  var f = e.target.files && e.target.files[0];
+  if (!f) return;
+  sourceFile = f;
+  META = null;
+  el("srcMeta").textContent = "";
+  el("playRow").style.display = "none";
+  el("expBtn").disabled = true;
+  setStatus("srcStatus", "Loading " + f.name + "\u2026");
+  pendingName = f.name;
+  vid.src = URL.createObjectURL(f);
+  vid.load();
+});
+
+vid.addEventListener("loadedmetadata", function () {
+  if (!vid.videoWidth) return;
+  META = { w: vid.videoWidth, h: vid.videoHeight, dur: vid.duration, name: pendingName };
+  setStatus("srcStatus", "");
+  el("srcMeta").textContent = META.name + " \u00b7 " + META.w + "\u00d7" + META.h + " \u00b7 " + fmtTime(META.dur);
+  el("playRow").style.display = "flex";
+  el("scrub").max = META.dur;
+  el("expBtn").disabled = busy();
+  recomputeAutoZoom();
+  el("moveCard").style.display = "block";
+  renderRuler();
+  renderTimeline();
+  vid.currentTime = 1e-3;
+  el("timeLbl").textContent = "0:00 / " + fmtTime(META.dur);
+});
+
+vid.addEventListener("error", function () {
+  var code = vid.error ? vid.error.code : 0;
+  if (code === 4) {
+    setStatus("srcStatus",
+      "Your browser cannot decode this file (likely H.265/HEVC or an exotic codec). " +
+      "Use the HEVC converter panel on the right, or convert with HandBrake.");
+  } else if (code === 2) {
+    setStatus("srcStatus", "A network error interrupted loading.");
+  } else {
+    setStatus("srcStatus", "The video could not be loaded (error " + code + ").");
+  }
+});
+
+vid.addEventListener("play", function () {
+  el("playBtn").textContent = "Pause";
+  if (audioCtx) audioCtx.resume();
+});
+vid.addEventListener("pause", function () {
+  el("playBtn").textContent = "Play";
+});
+
+el("playBtn").addEventListener("click", function () {
+  if (vid.paused) vid.play(); else vid.pause();
+});
+el("scrub").addEventListener("pointerdown", function () { scrubbing = true; });
+window.addEventListener("pointerup", function () { scrubbing = false; });
+el("scrub").addEventListener("input", function (e) {
+  vid.currentTime = parseFloat(e.target.value);
+});
+el("shakeOn").addEventListener("change", function (e) { SHAKE_ON = e.target.checked; });
+
+el("loopChk").addEventListener("change", function (e) {
+  LOOP = e.target.checked;
+  vid.loop = LOOP;
+});
+
+/* ================= procedural UI ================= */
+var sliderEls = {};
+PDEFS.forEach(function (def) {
+  var key = def[0], label = def[1];
+  var row = document.createElement("label");
+  row.className = "slider";
+  row.innerHTML = '<div class="slrow"><span>' + label + '</span><span class="val"></span></div>';
+  var input = document.createElement("input");
+  input.type = "range"; input.min = "0"; input.max = "3"; input.step = "0.05";
+  input.value = PARAMS[key];
+  row.appendChild(input);
+  var val = row.querySelector(".val");
+  val.textContent = (+PARAMS[key]).toFixed(2);
+  input.addEventListener("input", function () {
+    PARAMS[key] = parseFloat(input.value);
+    val.textContent = PARAMS[key].toFixed(2);
+    rebuildEngine();
+  });
+  el("slidersBox").appendChild(row);
+  sliderEls[key] = { input: input, val: val };
+});
+
+PRESETS.forEach(function (pr) {
+  var b = document.createElement("button");
+  b.className = "preset";
+  b.textContent = pr[0];
+  b.addEventListener("click", function () {
+    for (var k in pr[1]) {
+      PARAMS[k] = pr[1][k];
+      if (sliderEls[k]) {
+        sliderEls[k].input.value = PARAMS[k];
+        sliderEls[k].val.textContent = PARAMS[k].toFixed(2);
+      }
+    }
+    rebuildEngine();
+  });
+  el("presetRow").appendChild(b);
+});
+
+el("seed").addEventListener("change", function (e) {
+  SEED = parseInt(e.target.value) || 0;
+  rebuildEngine();
+});
+el("seedBtn").addEventListener("click", function () {
+  SEED = Math.floor(Math.random() * 1e9);
+  el("seed").value = SEED;
+  rebuildEngine();
+});
+
+/* ================= reference / transfer ================= */
+el("refFile").addEventListener("change", function (e) {
+  var f = e.target.files && e.target.files[0];
+  if (!f) return;
+  refReady = false;
+  el("refName").textContent = f.name;
+  setStatus("refStatus", "Loading " + f.name + "\u2026");
+  el("anaBtn").disabled = true;
+  el("anaBtn").textContent = "Load a reference first";
+  refVid.src = URL.createObjectURL(f);
+  refVid.load();
+});
+refVid.addEventListener("loadedmetadata", function () {
+  refReady = true;
+  setStatus("refStatus", "");
+  el("anaBtn").disabled = busy();
+  el("anaBtn").textContent = "Extract shake";
+});
+refVid.addEventListener("error", function () {
+  setStatus("refStatus",
+    "Your browser cannot decode the reference (likely HEVC/H.265). Use an H.264 clip.");
+});
+
+el("tsSlider").addEventListener("input", function (e) {
+  TRANSFER_SCALE = parseFloat(e.target.value);
+  el("tsVal").textContent = TRANSFER_SCALE.toFixed(2);
+  rebuildEngine();
+});
+
+el("anaBtn").addEventListener("click", async function () {
+  if (!refVid.videoWidth) return;
+  ANALYZING = true;
+  el("anaBtn").disabled = true;
+  el("anaFill").style.width = "0%";
+  el("anaMsg").textContent = "Extracting camera motion\u2026";
+  try {
+    var tr = await analyzeReference(refVid, function (p) {
+      el("anaFill").style.width = Math.round(p * 100) + "%";
+    });
+    var targetDur = (META && META.dur > 0) ? META.dur : (refVid.duration || (tr.N / tr.fps));
+    var dec = decomposeRef(tr, targetDur);
+    TRAJ = dec.traj;
+    if (dec.keys.length) {
+      KEYS = dec.keys;
+      SEL = -1;
+      MOVE_ON = true;
+      el("moveOn").checked = true;
+      renderTimeline();
+      refreshKeyEditor();
+    }
+    el("anaMsg").textContent =
+      "Extracted " + tr.N + " frames (" + (tr.N / tr.fps).toFixed(1) +
+      "s) of full motion." +
+      (dec.keys.length
+        ? " The slow intended movement was split into " + dec.keys.length +
+          " camera-move keyframes (editable in the camera move timeline); the residual shake is the reference layer."
+        : " All of it is kept as the reference layer.") +
+      " First 60s max; loops if shorter than the target.";
+    el("refHint").style.display = "none";
+    rebuildEngine();
+  } catch (err) {
+    el("anaMsg").textContent = "Analysis failed: " + String(err);
+  }
+  el("anaFill").style.width = "0%";
+  ANALYZING = false;
+  el("anaBtn").disabled = busy();
+});
+
+/* ================= framing ================= */
+el("zoomAuto").addEventListener("change", function (e) {
+  ZOOM_AUTO = e.target.checked;
+  el("zmSlider").disabled = ZOOM_AUTO;
+});
+el("zmSlider").addEventListener("input", function (e) {
+  MANUAL_ZOOM = parseFloat(e.target.value);
+  el("zmVal").textContent = MANUAL_ZOOM.toFixed(3);
+});
+
+/* ================= export ================= */
+function pickMime() {
+  var cands = [
+    'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+    "video/mp4;codecs=avc1",
+    "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm"
+  ];
+  for (var i = 0; i < cands.length; i++) {
+    try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(cands[i])) return cands[i]; } catch (e) {}
+  }
+  return "";
+}
+
+el("expFps").addEventListener("change", function (e) { EXPORT_FPS = parseInt(e.target.value); });
+el("expQ").addEventListener("change", function (e) { QUALITY = parseInt(e.target.value); });
+
+async function startExportRealtime() {
+  if (!META) return;
+  if (typeof cv.captureStream !== "function") {
+    el("expMsg").textContent = "This browser cannot record canvas video. Try Chrome or Edge.";
+    return;
+  }
+  EXPORTING = true;
+  DISCARD = false;
+  loopCount = 0;
+  vid.loop = false;
+  el("expBtn").style.display = "none";
+  el("cancelBtn").style.display = "inline-block";
+  el("dlLink").style.display = "none";
+  el("expMsg").textContent = "";
+  if (RESULT_URL) { URL.revokeObjectURL(RESULT_URL); RESULT_URL = null; }
+
+  var stream = cv.captureStream(EXPORT_FPS);
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var src = audioCtx.createMediaElementSource(vid);
+      audioDest = audioCtx.createMediaStreamDestination();
+      src.connect(audioDest);
+      src.connect(audioCtx.destination);
+    }
+    await audioCtx.resume();
+    var at = audioDest.stream.getAudioTracks()[0];
+    if (at) stream.addTrack(at);
+  } catch (e) {}
+
+  var mime = pickMime();
+  var opts = { videoBitsPerSecond: QUALITY };
+  if (mime) opts.mimeType = mime;
+  var rec = new MediaRecorder(stream, opts);
+  REC = rec;
+  CHUNKS = [];
+  rec.ondataavailable = function (ev) {
+    if (ev.data && ev.data.size) CHUNKS.push(ev.data);
+  };
+  rec.onstop = function () {
+    REC = null;
+    vid.onended = null;
+    vid.pause();
+    el("cancelBtn").style.display = "none";
+    el("expFill").style.width = "0%";
+    EXPORTING = false;
+    vid.loop = LOOP;
+    el("expBtn").style.display = "inline-block";
+    el("expBtn").disabled = busy();
+    if (DISCARD) { el("expMsg").textContent = "Export cancelled."; return; }
+    var type = mime ? mime.split(";")[0] : "video/webm";
+    var blob = new Blob(CHUNKS, { type: type });
+    RESULT_URL = URL.createObjectURL(blob);
+    var ext = type.indexOf("mp4") >= 0 ? "mp4" : "webm";
+    var a = el("dlLink");
+    a.href = RESULT_URL;
+    a.download = "shaken_" + (META ? META.name.replace(/\.[^.]+$/, "") : "video") + "." + ext;
+    a.textContent = "Download " + ext.toUpperCase() + " (" + fmtSize(blob.size) + ")";
+    a.style.display = "inline-block";
+    el("expMsg").textContent = "Export finished.";
+  };
+
+  vid.pause();
+  await seekTo(vid, 1e-3);
+  draw();
+  vid.onended = function () { try { rec.stop(); } catch (e) {} };
+  rec.start(250);
+  try { await vid.play(); } catch (e) { try { rec.stop(); } catch (e2) {} }
+
+  var tick = function () {
+    if (!REC) return;
+    if (META && META.dur) {
+      var pct = Math.min(0.999, vid.currentTime / META.dur);
+      el("expFill").style.width = Math.round(pct * 100) + "%";
+      el("expMsg").textContent = "Recording in real time with audio, " + Math.round(pct * 100) + "%";
+    }
+    if (!vid.ended && !vid.paused) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+el("cancelBtn").addEventListener("click", function () {
+  DISCARD = true;
+  vid.onended = null;
+  vid.pause();
+  // Real-time path: stop the recorder directly. Frame-accurate path: the
+  // render loop notices DISCARD on its next frame and cancels the output.
+  try { if (REC && REC.state !== "inactive") REC.stop(); } catch (e) {}
+});
+
+/* ================= frame-accurate export (WebCodecs + mediabunny) ================= */
+var MB_PROMISE = null;
+
+function loadMediabunny() {
+  if (window.Mediabunny) return Promise.resolve(window.Mediabunny);
+  if (!MB_PROMISE) {
+    MB_PROMISE = new Promise(function (res, rej) {
+      var s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/mediabunny@1.23.0/dist/bundles/mediabunny.min.cjs";
+      s.onload = function () { res(window.Mediabunny); };
+      s.onerror = function () {
+        MB_PROMISE = null;
+        rej(new Error("export library download failed (network blocked?)"));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return MB_PROMISE;
+}
+
+async function startExportAccurate() {
+  var MB = await loadMediabunny();
+  if (!MB) throw new Error("export library failed to initialize");
+  if (MB.canEncodeVideo && !(await MB.canEncodeVideo("avc", { width: META.w, height: META.h, quality: new MB.Quality({ bitrate: QUALITY }) }))) {
+    throw new Error("this browser cannot encode H.264 video");
+  }
+
+  // Decode the source audio once. vid.src is always a blob URL (original
+  // file or converter output), so fetch works without re-reading anything.
+  var audioBuf = null;
+  try {
+    var ab = await (await fetch(vid.src)).arrayBuffer();
+    var AC = window.AudioContext || window.webkitAudioContext;
+    var dctx = new AC();
+    audioBuf = await dctx.decodeAudioData(ab);
+    if (dctx.close) dctx.close();
+  } catch (e) { audioBuf = null; }
+
+  EXPORTING = true;
+  DISCARD = false;
+  vid.pause();
+  el("expBtn").style.display = "none";
+  el("cancelBtn").style.display = "inline-block";
+  el("dlLink").style.display = "none";
+  el("expMsg").textContent = "";
+  if (RESULT_URL) { URL.revokeObjectURL(RESULT_URL); RESULT_URL = null; }
+
+  var output = null;
+  try {
+    output = new MB.Output({
+      format: new MB.Mp4OutputFormat({ fastStart: "in-memory" }),
+      target: new MB.BufferTarget()
+    });
+    var vsrc = new MB.CanvasSource(cv, { codec: "avc", quality: new MB.Quality({ bitrate: QUALITY }) });
+    output.addVideoTrack(vsrc, { frameRate: EXPORT_FPS });
+    var aCodec = "aac";
+    if (audioBuf && MB.canEncodeAudio) {
+      if (!(await MB.canEncodeAudio("aac"))) {
+        if (await MB.canEncodeAudio("opus")) { aCodec = "opus"; }
+        else { audioBuf = null; }
+      }
+    }
+    if (audioBuf) {
+      var asrc = new MB.AudioBufferSource({ codec: aCodec, quality: new MB.Quality({ bitrate: 192e3 }) });
+      output.addAudioTrack(asrc);
+    }
+    await output.start();
+    if (audioBuf) {
+      // Audio first: smaller data footprint, so the muxer can interleave
+      // video packets as they arrive instead of buffering them.
+      await asrc.add(audioBuf);
+    }
+
+    var dur = META.dur, fps = EXPORT_FPS;
+    var total = Math.max(1, Math.round(dur * fps));
+    for (var i = 0; i < total; i++) {
+      if (DISCARD) {
+        el("expMsg").textContent = "Export cancelled.";
+        try { await output.cancel(); } catch (e) {}
+        return;
+      }
+      var t = Math.min(dur - 1e-4, i / fps);
+      await seekTo(vid, t);
+      draw();
+      await vsrc.add(i / fps, 1 / fps);
+      if (i % 5 === 0 || i === total - 1) {
+        var pct = (i + 1) / total;
+        el("expFill").style.width = Math.round(pct * 100) + "%";
+        el("expMsg").textContent =
+          "Rendering frame " + (i + 1) + " / " + total +
+          " (frame-accurate, not real time)";
+      }
+    }
+    await output.finalize();
+    var blob = new Blob([output.target.buffer], { type: "video/mp4" });
+    RESULT_URL = URL.createObjectURL(blob);
+    var a = el("dlLink");
+    a.href = RESULT_URL;
+    a.download = "shaken_" + (META.name ? META.name.replace(/\.[^.]+$/, "") : "video") + ".mp4";
+    a.textContent = "Download MP4 (" + fmtSize(blob.size) + ")";
+    a.style.display = "inline-block";
+    el("expMsg").textContent =
+      "Export finished: " + total + " frames at " + fps + " fps" +
+      (audioBuf ? " with original audio." : ", no audio track found in the source.");
+  } finally {
+    EXPORTING = false;
+    el("cancelBtn").style.display = "none";
+    el("expFill").style.width = "0%";
+    el("expBtn").style.display = "inline-block";
+    el("expBtn").disabled = busy();
+  }
+}
+
+async function startExport() {
+  if (!META) return;
+  // Prefer the frame-accurate path: every frame is rendered exactly at its
+  // timestamp, so no frame is dropped or duplicated regardless of display
+  // refresh rate or machine load. Falls back to real-time recording when
+  // WebCodecs encoding is unavailable.
+  if (typeof window.VideoEncoder === "function") {
+    el("expBtn").disabled = true;
+    el("expMsg").textContent = "Preparing frame-accurate export...";
+    try {
+      await startExportAccurate();
+      return;
+    } catch (err) {
+      if (DISCARD) return;
+      el("expMsg").textContent =
+        "Frame-accurate export unavailable (" + String(err) +
+        "). Falling back to real-time recording.";
+    }
+  }
+  await startExportRealtime();
+}
+el("expBtn").addEventListener("click", startExport);
+
+/* ================= HEVC converter (ffmpeg.wasm) ================= */
+function initFfmpeg() {
+  var ff = window.FFmpeg;
+  var createFFmpeg = ff && (ff.createFFmpeg || ff);
+  if (!createFFmpeg) {
+    CONV_LOADING = false;
+    el("convMsg").textContent = "Converter engine failed to initialize.";
+    return;
+  }
+  var ffmpeg = createFFmpeg({
+    corePath: "https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js",
+    log: false,
+    progress: function (p) {
+      var r = p && typeof p.ratio === "number" && isFinite(p.ratio)
+        ? Math.max(0, Math.min(1, p.ratio)) : 0;
+      if (CONV_BUSY) el("convFill").style.width = Math.round(r * 100) + "%";
+    }
+  });
+  ffmpeg.load().then(function () {
+    FFMPEG = ffmpeg;
+    CONV_READY = true;
+    CONV_LOADING = false;
+    el("convLoadBtn").style.display = "none";
+    el("convBtn").style.display = "inline-block";
+    el("convBtn").disabled = !sourceFile || busy();
+    el("convMsg").textContent = "Converter ready.";
+  }, function (e) {
+    CONV_LOADING = false;
+    el("convMsg").textContent = "Converter engine failed to load: " + String(e);
+  });
+}
+
+el("convLoadBtn").addEventListener("click", function () {
+  if (CONV_READY || CONV_LOADING) return;
+  CONV_LOADING = true;
+  el("convMsg").textContent = "Downloading converter engine (~32 MB, one time)\u2026";
+  if (window.FFmpeg) { initFfmpeg(); return; }
+  var s = document.createElement("script");
+  s.src = "https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js";
+  s.onload = function () { initFfmpeg(); };
+  s.onerror = function () {
+    CONV_LOADING = false;
+    el("convMsg").textContent = "Could not download the converter engine (network blocked). Convert with HandBrake instead.";
+  };
+  document.head.appendChild(s);
+});
+
+el("convBtn").addEventListener("click", async function () {
+  var f = sourceFile, ffmpeg = FFMPEG;
+  if (!f || !ffmpeg) return;
+  CONV_BUSY = true;
+  el("convBtn").disabled = true;
+  el("convFill").style.width = "0%";
+  if (CONV_URL) { URL.revokeObjectURL(CONV_URL); CONV_URL = ""; }
+  el("convDl").style.display = "none";
+  el("convMsg").textContent = "Converting to H.264\u2026 this can take a few minutes.";
+  try {
+    var buf = new Uint8Array(await f.arrayBuffer());
+    try { ffmpeg.FS("unlink", "in.mp4"); } catch (e) {}
+    try { ffmpeg.FS("unlink", "out.mp4"); } catch (e) {}
+    ffmpeg.FS("writeFile", "in.mp4", buf);
+    await ffmpeg.run(
+      "-i", "in.mp4",
+      "-vf", "scale=-2:min(1080\\,ih)",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "21",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      "out.mp4"
+    );
+    var data = ffmpeg.FS("readFile", "out.mp4");
+    try { ffmpeg.FS("unlink", "in.mp4"); } catch (e) {}
+    try { ffmpeg.FS("unlink", "out.mp4"); } catch (e) {}
+    var blob = new Blob([data.buffer], { type: "video/mp4" });
+    pendingName = f.name.replace(/\.[^.]+$/, "") + "_h264.mp4";
+    vid.src = URL.createObjectURL(blob);
+    vid.load();
+    CONV_URL = URL.createObjectURL(blob);
+    var a = el("convDl");
+    a.href = CONV_URL;
+    a.style.display = "inline-block";
+    el("convMsg").textContent = "Converted. Loaded as the source video, and downloadable below.";
+  } catch (e) {
+    el("convMsg").textContent = "Conversion failed: " + String(e);
+  }
+  CONV_BUSY = false;
+  el("convFill").style.width = "0%";
+  el("convBtn").disabled = !sourceFile || busy();
+});
+
+/* ================= camera move keyframes ================= */
+var MOVE_ON = true;
+var KEYS = [];        // {t, x, y, r}: t seconds, x/y percent of short side, r degrees
+var SEL = -1;
+var TRACK_DRAG = null, TRACK_SCRUB = false;
+
+function moveAt(t) {
+  if (!KEYS.length) return { x: 0, y: 0, r: 0 };
+  if (t <= KEYS[0].t) return { x: KEYS[0].x, y: KEYS[0].y, r: KEYS[0].r };
+  var lastK = KEYS[KEYS.length - 1];
+  if (t >= lastK.t) return { x: lastK.x, y: lastK.y, r: lastK.r };
+  for (var i = 0; i < KEYS.length - 1; i++) {
+    var a = KEYS[i], b = KEYS[i + 1];
+    if (t >= a.t && t <= b.t) {
+      var u = (t - a.t) / (b.t - a.t || 1e-9);
+      var s = u * u * (3 - 2 * u);   // ease in and out per segment
+      return {
+        x: a.x + (b.x - a.x) * s,
+        y: a.y + (b.y - a.y) * s,
+        r: a.r + (b.r - a.r) * s
+      };
+    }
+  }
+  return { x: lastK.x, y: lastK.y, r: lastK.r };
+}
+
+function combinedDisp(T, clipT, w, h) {
+  var d = ENGINE ? ENGINE.disp(T, w, h) : { dx: 0, dy: 0, roll: 0, zb: 1 };
+  if (MOVE_ON && KEYS.length) {
+    var mv = moveAt(clipT);
+    var m = Math.min(w, h);
+    d = {
+      dx: d.dx + (mv.x / 100) * m,
+      dy: d.dy + (mv.y / 100) * m,
+      roll: d.roll + (mv.r * Math.PI / 180),
+      zb: d.zb
+    };
+  }
+  return d;
+}
+
+function renderRuler() {
+  var r = el("ruler");
+  r.innerHTML = "";
+  if (!META || META.dur <= 0) return;
+  var steps = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
+  var step = steps[steps.length - 1];
+  for (var i = 0; i < steps.length; i++) {
+    if (META.dur / steps[i] <= 18) { step = steps[i]; break; }
+  }
+  for (var t = 0; t <= META.dur + 1e-6; t += step) {
+    var tick = document.createElement("div");
+    tick.className = "tick";
+    tick.style.left = (t / META.dur) * 100 + "%";
+    r.appendChild(tick);
+    var lab = document.createElement("span");
+    lab.className = "ticklab";
+    lab.style.left = (t / META.dur) * 100 + "%";
+    lab.textContent = (Math.round(t * 100) / 100) + "s";
+    r.appendChild(lab);
+  }
+}
+
+function renderTimeline() {
+  var box = el("keysBox");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!META || META.dur <= 0) return;
+  for (var i = 0; i < KEYS.length; i++) {
+    (function (idx) {
+      var k = KEYS[idx];
+      var d = document.createElement("div");
+      d.className = "key" + (idx === SEL ? " sel" : "");
+      d.style.left = (k.t / META.dur) * 100 + "%";
+      d.title = "t=" + k.t.toFixed(2) + "s, X=" + k.x.toFixed(1) + "%, Y=" + k.y.toFixed(1) + "%, roll=" + k.r.toFixed(1) + "\u00b0";
+      d.addEventListener("pointerdown", function (e) {
+        e.stopPropagation();
+        SEL = idx;
+        renderTimeline();
+        refreshKeyEditor();
+        var rect = el("track").getBoundingClientRect();
+        TRACK_DRAG = { k: k, left: rect.left, width: rect.width };
+        d._drag = true;
+        try { d.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      d.addEventListener("pointermove", function (e) {
+        if (!TRACK_DRAG || !d._drag || !META) return;
+        var tt = (e.clientX - TRACK_DRAG.left) / TRACK_DRAG.width * META.dur;
+        tt = Math.max(0, Math.min(META.dur, Math.round(tt * 20) / 20));
+        TRACK_DRAG.k.t = tt;
+        d.style.left = (tt / META.dur) * 100 + "%";
+        el("ktInput").value = tt.toFixed(2);
+      });
+      var up = function () {
+        if (!d._drag) return;
+        d._drag = false;
+        TRACK_DRAG = null;
+        KEYS.sort(function (a, b) { return a.t - b.t; });
+        SEL = KEYS.indexOf(k);
+        renderTimeline();
+        refreshKeyEditor();
+        recomputeAutoZoom();
+      };
+      d.addEventListener("pointerup", up);
+      d.addEventListener("pointercancel", up);
+      box.appendChild(d);
+    })(i);
+  }
+}
+
+function refreshKeyEditor() {
+  var has = SEL >= 0 && SEL < KEYS.length;
+  el("keyEditor").style.display = has ? "block" : "none";
+  el("delKey").disabled = !has;
+  if (!has) return;
+  var k = KEYS[SEL];
+  el("kxSlider").value = k.x;
+  el("kxVal").textContent = k.x.toFixed(1) + "%";
+  el("kySlider").value = k.y;
+  el("kyVal").textContent = k.y.toFixed(1) + "%";
+  el("krSlider").value = k.r;
+  el("krVal").textContent = k.r.toFixed(1) + "\u00b0";
+  el("ktInput").value = k.t.toFixed(2);
+}
+
+function selectKey(i) {
+  SEL = i;
+  renderTimeline();
+  refreshKeyEditor();
+}
+
+el("addKey").addEventListener("click", function () {
+  if (!META) return;
+  var cur = Math.round(vid.currentTime * 20) / 20;
+  for (var i = 0; i < KEYS.length; i++) {
+    if (Math.abs(KEYS[i].t - cur) < 0.03) { selectKey(i); return; }
+  }
+  var mv = KEYS.length ? moveAt(cur) : { x: 0, y: 0, r: 0 };
+  var k = { t: cur, x: mv.x, y: mv.y, r: mv.r };
+  KEYS.push(k);
+  KEYS.sort(function (a, b) { return a.t - b.t; });
+  selectKey(KEYS.indexOf(k));
+  recomputeAutoZoom();
+});
+
+el("delKey").addEventListener("click", function () {
+  if (SEL < 0 || SEL >= KEYS.length) return;
+  KEYS.splice(SEL, 1);
+  SEL = -1;
+  renderTimeline();
+  refreshKeyEditor();
+  recomputeAutoZoom();
+});
+
+function goKey(dir) {
+  if (!KEYS.length || !META) return;
+  var cur = vid.currentTime, best = -1, bestT = dir > 0 ? Infinity : -Infinity;
+  for (var i = 0; i < KEYS.length; i++) {
+    var t = KEYS[i].t;
+    if (dir > 0 && t > cur + 0.01 && t < bestT) { bestT = t; best = i; }
+    if (dir < 0 && t < cur - 0.01 && t > bestT) { bestT = t; best = i; }
+  }
+  if (best >= 0) {
+    vid.currentTime = KEYS[best].t;
+    selectKey(best);
+  }
+}
+el("prevKey").addEventListener("click", function () { goKey(-1); });
+el("nextKey").addEventListener("click", function () { goKey(1); });
+
+el("clearKeys").addEventListener("click", function () {
+  KEYS = [];
+  SEL = -1;
+  renderTimeline();
+  refreshKeyEditor();
+  recomputeAutoZoom();
+});
+
+el("moveOn").addEventListener("change", function (e) {
+  MOVE_ON = e.target.checked;
+  recomputeAutoZoom();
+});
+
+el("kxSlider").addEventListener("input", function (e) {
+  if (SEL < 0) return;
+  KEYS[SEL].x = parseFloat(e.target.value);
+  el("kxVal").textContent = KEYS[SEL].x.toFixed(1) + "%";
+  recomputeAutoZoom();
+});
+el("kySlider").addEventListener("input", function (e) {
+  if (SEL < 0) return;
+  KEYS[SEL].y = parseFloat(e.target.value);
+  el("kyVal").textContent = KEYS[SEL].y.toFixed(1) + "%";
+  recomputeAutoZoom();
+});
+el("krSlider").addEventListener("input", function (e) {
+  if (SEL < 0) return;
+  KEYS[SEL].r = parseFloat(e.target.value);
+  el("krVal").textContent = KEYS[SEL].r.toFixed(1) + "\u00b0";
+  recomputeAutoZoom();
+});
+el("ktInput").addEventListener("change", function (e) {
+  if (SEL < 0 || !META) return;
+  var k = KEYS[SEL];
+  var t = Math.max(0, Math.min(META.dur, parseFloat(e.target.value) || 0));
+  k.t = Math.round(t * 20) / 20;
+  KEYS.sort(function (a, b) { return a.t - b.t; });
+  SEL = KEYS.indexOf(k);
+  renderTimeline();
+  refreshKeyEditor();
+  recomputeAutoZoom();
+});
+
+function trackSeek(e) {
+  if (!META || META.dur <= 0) return;
+  var rect = el("track").getBoundingClientRect();
+  var t = (e.clientX - rect.left) / rect.width * META.dur;
+  vid.currentTime = Math.max(0, Math.min(META.dur, t));
+}
+el("track").addEventListener("pointerdown", function (e) {
+  if (e.target.classList.contains("key")) return;
+  TRACK_SCRUB = true;
+  trackSeek(e);
+});
+el("track").addEventListener("pointermove", function (e) {
+  if (TRACK_SCRUB) trackSeek(e);
+});
+window.addEventListener("pointerup", function () { TRACK_SCRUB = false; });
+
+/* ================= settings save/load ================= */
+function collectSettings() {
+  var s = {
+    app: "camera-shake-studio",
+    version: 1,
+    seed: SEED,
+    params: PARAMS,
+    transferScale: TRANSFER_SCALE,
+    zoomAuto: ZOOM_AUTO,
+    manualZoom: MANUAL_ZOOM,
+    exportFps: EXPORT_FPS,
+    quality: QUALITY,
+    shakeOn: SHAKE_ON,
+    loop: LOOP,
+    moveOn: MOVE_ON,
+    refTraj: null
+  };
+  s.cameraMove = KEYS.map(function (k) { return { t: k.t, x: k.x, y: k.y, r: k.r }; });
+  if (TRAJ) {
+    var q = new Array(TRAJ.arr.length);
+    for (var i = 0; i < TRAJ.arr.length; i++) {
+      q[i] = Math.round(TRAJ.arr[i] * 10000) / 10000;
+    }
+    s.refTraj = { N: TRAJ.N, fps: TRAJ.fps, w: TRAJ.w, h: TRAJ.h, arr: q };
+  }
+  return JSON.stringify(s);
+}
+
+el("saveBtn").addEventListener("click", function () {
+  var blob = new Blob([collectSettings()], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "shake-settings.json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 2000);
+  el("setMsg").textContent = "Settings saved" +
+    (TRAJ ? " including the reference shake (" + TRAJ.N + " frames)" : "") +
+    (KEYS.length ? " and " + KEYS.length + " camera-move keyframes" : "") + ".";
+});
+
+el("loadFile").addEventListener("change", function (e) {
+  var f = e.target.files && e.target.files[0];
+  if (!f) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    try {
+      var s = JSON.parse(reader.result);
+      if (!s || s.app !== "camera-shake-studio") {
+        throw new Error("not a Camera Shake Studio settings file");
+      }
+      if (typeof s.seed === "number") { SEED = s.seed; el("seed").value = SEED; }
+      if (s.params) {
+        for (var k in PARAMS) {
+          if (typeof s.params[k] === "number") PARAMS[k] = s.params[k];
+          if (sliderEls[k]) {
+            sliderEls[k].input.value = PARAMS[k];
+            sliderEls[k].val.textContent = PARAMS[k].toFixed(2);
+          }
+        }
+      }
+      if (typeof s.transferScale === "number") {
+        TRANSFER_SCALE = s.transferScale;
+        el("tsSlider").value = TRANSFER_SCALE;
+        el("tsVal").textContent = TRANSFER_SCALE.toFixed(2);
+      }
+      if (typeof s.zoomAuto === "boolean") {
+        ZOOM_AUTO = s.zoomAuto;
+        el("zoomAuto").checked = ZOOM_AUTO;
+        el("zmSlider").disabled = ZOOM_AUTO;
+      }
+      if (typeof s.manualZoom === "number") {
+        MANUAL_ZOOM = s.manualZoom;
+        el("zmSlider").value = MANUAL_ZOOM;
+        el("zmVal").textContent = MANUAL_ZOOM.toFixed(3);
+      }
+      if (typeof s.exportFps === "number" && [24, 25, 30, 60].indexOf(s.exportFps) >= 0) {
+        EXPORT_FPS = s.exportFps;
+        el("expFps").value = String(EXPORT_FPS);
+      }
+      if (typeof s.quality === "number" && [8000000, 16000000, 25000000].indexOf(s.quality) >= 0) {
+        QUALITY = s.quality;
+        el("expQ").value = String(QUALITY);
+      }
+      if (typeof s.shakeOn === "boolean") { SHAKE_ON = s.shakeOn; el("shakeOn").checked = SHAKE_ON; }
+      if (typeof s.loop === "boolean") {
+        LOOP = s.loop;
+        el("loopChk").checked = LOOP;
+        vid.loop = LOOP;
+      }
+      if (Array.isArray(s.cameraMove)) {
+        KEYS = s.cameraMove.filter(function (k) {
+          return k && typeof k.t === "number";
+        }).map(function (k) {
+          return {
+            t: Math.max(0, k.t),
+            x: typeof k.x === "number" ? Math.max(-150, Math.min(150, k.x)) : 0,
+            y: typeof k.y === "number" ? Math.max(-150, Math.min(150, k.y)) : 0,
+            r: typeof k.r === "number" ? Math.max(-90, Math.min(90, k.r)) : 0
+          };
+        });
+        KEYS.sort(function (a, b) { return a.t - b.t; });
+        SEL = -1;
+        renderTimeline();
+        refreshKeyEditor();
+      }
+      if (typeof s.moveOn === "boolean") {
+        MOVE_ON = s.moveOn;
+        el("moveOn").checked = MOVE_ON;
+      }
+      if (s.refTraj && s.refTraj.arr && s.refTraj.N) {
+        TRAJ = {
+          arr: new Float32Array(s.refTraj.arr),
+          N: s.refTraj.N,
+          fps: s.refTraj.fps || 30,
+          w: s.refTraj.w || 1920,
+          h: s.refTraj.h || 1080
+        };
+        el("anaMsg").textContent =
+          "Reference shake loaded from settings (" + TRAJ.N + " frames).";
+      } else {
+        TRAJ = null;
+      }
+      el("refHint").style.display = TRAJ ? "none" : "block";
+      rebuildEngine();
+      el("setMsg").textContent = "Settings loaded." +
+        (TRAJ ? " Reference shake restored." : "");
+    } catch (err) {
+      el("setMsg").textContent = "Could not load settings: " + String(err);
+    }
+  };
+  reader.readAsText(f);
+  e.target.value = "";
+});
+
+vid.loop = LOOP;
+rebuildEngine();
+</script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" nonce="P9dTfDNqb/tLs9cctg91gA==" data-cf-beacon='{"version":"2024.11.0","token":"36b4216ae2dc4d5488c249161e71fe1e","spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>
