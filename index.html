@@ -68,7 +68,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.5. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.5.1. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -1159,7 +1159,7 @@ function loadMediabunny() {
 async function startExportAccurate() {
   var MB = await loadMediabunny();
   if (!MB) throw new Error("export library failed to initialize");
-  if (MB.canEncodeVideo && !(await MB.canEncodeVideo("avc", { width: META.w, height: META.h, quality: new MB.Quality({ bitrate: QUALITY }) }))) {
+  if (MB.canEncodeVideo && !(await MB.canEncodeVideo("avc", { width: META.w, height: META.h, bitrate: QUALITY }))) {
     throw new Error("this browser cannot encode H.264 video");
   }
 
@@ -1189,7 +1189,7 @@ async function startExportAccurate() {
       format: new MB.Mp4OutputFormat({ fastStart: "in-memory" }),
       target: new MB.BufferTarget()
     });
-    var vsrc = new MB.CanvasSource(cv, { codec: "avc", quality: new MB.Quality({ bitrate: QUALITY }) });
+    var vsrc = new MB.CanvasSource(cv, { codec: "avc", bitrate: QUALITY });
     output.addVideoTrack(vsrc, { frameRate: EXPORT_FPS });
     var aCodec = "aac";
     if (audioBuf && MB.canEncodeAudio) {
@@ -1199,7 +1199,7 @@ async function startExportAccurate() {
       }
     }
     if (audioBuf) {
-      var asrc = new MB.AudioBufferSource({ codec: aCodec, quality: new MB.Quality({ bitrate: 192e3 }) });
+      var asrc = new MB.AudioBufferSource({ codec: aCodec, bitrate: 192000 });
       output.addAudioTrack(asrc);
     }
     await output.start();
