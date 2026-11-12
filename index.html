@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.13. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.14. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -89,6 +89,17 @@
         <div class="row" id="playRow" style="display:none; margin-top:12px">
           <button id="playBtn" class="btn secondary">Play</button>
           <label class="check"><input id="loopChk" type="checkbox" checked> Loop</label>
+          <label class="check">Speed
+            <select id="spdSel">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="0.75">0.75x</option>
+              <option value="1" selected>1x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select></label>
           <input id="scrub" type="range" min="0" max="1" step="0.01" value="0" style="flex:1">
           <span id="timeLbl" class="muted small mono" style="width:90px; text-align:right">0:00 / 0:00</span>
         </div>
@@ -204,7 +215,9 @@
           so the timeline, keyframes and shake stay in full-clip time.
           Format picks the container and codecs of the export; if your
           browser cannot encode the first codec, the next one listed in
-          the dropdown entry is tried.
+          the dropdown entry is tried. The Speed control in the player
+          applies to exports too: the clip is retimed and the audio is
+          varispeed, exactly as the preview plays it.
         </p>
       </div>
     </div>
@@ -819,6 +832,7 @@ var FFMPEG = null, CONV_READY = false, CONV_LOADING = false;
 var sourceFile = null, pendingName = "";
 var scrubbing = false, refReady = false;
 var LOOP = true, loopCount = 0, lastFrameT = 0;
+var PLAY_SPEED = 1;
 
 var PRESETS = [
   ["Subtle handheld", { intensity: 0.55, drift: 0.8, sway: 0.7, tremor: 0.8, rotation: 0.7, bounce: 0, breath: 0.8 }],
@@ -949,6 +963,8 @@ vid.addEventListener("loadedmetadata", function () {
   el("srcMeta").textContent = META.name + " \u00b7 " + META.w + "\u00d7" + META.h + " \u00b7 " + fmtTime(META.dur);
   el("playRow").style.display = "flex";
   el("scrub").max = META.dur;
+  applySpeed(); // element rate persists across loads, but a settings-loaded
+               // speed must reach a newly loaded file too
   el("expBtn").disabled = busy();
   recomputeAutoZoom();
   el("moveCard").style.display = "block";
@@ -1007,6 +1023,27 @@ el("shakeOn").addEventListener("change", function (e) { SHAKE_ON = e.target.chec
 el("loopChk").addEventListener("change", function (e) {
   LOOP = e.target.checked;
   vid.loop = LOOP;
+});
+
+// ================= playback speed =================
+var SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4];
+function applySpeed() {
+  vid.playbackRate = PLAY_SPEED;
+  // Varispeed on purpose: the frame-accurate export retimes audio with an
+  // offline resample, which shifts pitch, so the preview must sound the
+  // same as the exported file instead of time-stretching.
+  try { vid.preservesPitch = PLAY_SPEED === 1; } catch (e) {}
+  try { vid.webkitPreservesPitch = PLAY_SPEED === 1; } catch (e) {}
+}
+el("spdSel").addEventListener("change", function (e) {
+  var v = parseFloat(e.target.value);
+  if (isNaN(v) || SPEEDS.indexOf(v) < 0) v = 1;
+  if (busy()) { e.target.value = String(PLAY_SPEED); return; }
+  PLAY_SPEED = v;
+  applySpeed();
+  // Overlay timing is anchored to wall clock, so a rate change while
+  // playing needs a reschedule from the current playhead.
+  if (!vid.paused) scheduleOverlays();
 });
 
 /* ================= procedural UI ================= */
@@ -1380,9 +1417,13 @@ async function startExportAccurate() {
   var rgPre = trimRange();
   if (audioBuf) audioBuf = sliceAudio(audioBuf, rgPre.start, rgPre.end);
   audioBuf = await applyNotches(audioBuf);
+  // Speed is applied to the source audio before overlays: overlay sounds
+  // stay at natural speed, pinned to their clip-time moments on the warped
+  // timeline.
+  audioBuf = await applySpeedAudio(audioBuf, PLAY_SPEED);
   // Overlays mix on top of the notched original audio; notches never touch
   // the overlay tracks themselves.
-  audioBuf = await mixOverlays(audioBuf, rgPre.start);
+  audioBuf = await mixOverlays(audioBuf, rgPre.start, PLAY_SPEED);
 
   EXPORTING = true;
   DISCARD = false;
@@ -1422,15 +1463,19 @@ async function startExportAccurate() {
     }
 
     var dur = META.dur, fps = EXPORT_FPS;
+    var spd = PLAY_SPEED || 1;
     var rg = trimRange();
-    var total = Math.max(1, Math.round(rg.outDur * fps));
+    // The output timeline is clip time divided by the speed: a 2x export
+    // of a 4 s window is 2 s long, sampled every 1/fps s of output time,
+    // while every frame is still rendered at its full-clip source time.
+    var total = Math.max(1, Math.round((rg.outDur * fps) / spd));
     for (var i = 0; i < total; i++) {
       if (DISCARD) {
         el("expMsg").textContent = "Export cancelled.";
         try { await output.cancel(); } catch (e) {}
         return;
       }
-      var t = Math.min(rg.end - 1e-4, rg.start + i / fps);
+      var t = Math.min(rg.end - 1e-4, rg.start + (i / fps) * spd);
       await seekTo(vid, t);
       draw();
       await vsrc.add(i / fps, 1 / fps);
@@ -1452,6 +1497,7 @@ async function startExportAccurate() {
     a.style.display = "inline-block";
     el("expMsg").textContent =
       "Export finished: " + total + " frames at " + fps + " fps" +
+      (spd !== 1 ? ", " + spd + "x speed (" + (rg.outDur / spd).toFixed(2) + "s)" : "") +
       (audioBuf ? " with original audio." : ", no audio track found in the source.");
   } finally {
     EXPORTING = false;
@@ -2271,6 +2317,26 @@ async function applyNotches(buf) {
   }
 }
 
+async function applySpeedAudio(buf, spd) {
+  // Retime the source audio to the export speed with an offline resample.
+  // This is varispeed (pitch shifts with rate), matching the preview, where
+  // preservesPitch is turned off for the same reason.
+  if (!buf || !spd || spd === 1) return buf;
+  try {
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    var len = Math.max(1, Math.ceil(buf.length / spd));
+    var ctx = new OC(buf.numberOfChannels, len, buf.sampleRate);
+    var src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = spd;
+    src.connect(ctx.destination);
+    src.start(0);
+    return await ctx.startRendering();
+  } catch (e) {
+    return buf;
+  }
+}
+
 function sxOf(f) { return Math.log(f / FMIN) / Math.log(FMAX / FMIN); }
 function sfOf(u) { return FMIN * Math.pow(FMAX / FMIN, u); }
 
@@ -2500,7 +2566,9 @@ function scheduleOverlays() {
   var t0 = audioCtx.currentTime + 0.02;
   var now = vid.currentTime;
   activeOverlays().forEach(function (t) {
-    var delta = t.start - now;
+    // Overlay content plays at natural speed, pinned to a clip-time moment;
+    // wall-clock distance to that moment scales with the playback rate.
+    var delta = (t.start - now) / (PLAY_SPEED || 1);
     // Position inside the overlay: time already elapsed since its At point,
     // plus the Skip cut from the overlay's own beginning.
     var off = (delta < 0 ? -delta : 0) + (t.skip || 0);
@@ -2518,16 +2586,19 @@ function scheduleOverlays() {
   });
 }
 
-async function mixOverlays(base, trimStart) {
-  // Offline mix for the frame-accurate path: base (already trimmed and
-  // notched) plays at 0, overlays are placed at start - trimStart. If the
-  // source video has no audio at all, a silent base of the export length is
-  // synthesized so overlays still make it into the file.
+async function mixOverlays(base, trimStart, speed) {
+  // Offline mix for the frame-accurate path: base (already trimmed,
+  // notched and retimed to the export speed) plays at 0, overlays are
+  // placed at their clip-time positions mapped into the warped output
+  // timeline. If the source video has no audio at all, a silent base of
+  // the export length is synthesized so overlays still make it into the
+  // file.
+  var spd = speed || 1;
   var ov = activeOverlays();
   if (!ov.length) return base;
   var sr = base ? base.sampleRate : 48000;
   var chs = base ? base.numberOfChannels : 2;
-  var len = base ? base.length : Math.max(1, Math.ceil((trimRange().outDur || 0) * sr));
+  var len = base ? base.length : Math.max(1, Math.ceil(((trimRange().outDur || 0) / spd) * sr));
   if (!len || len < 1) return base;
   try {
     var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -2540,9 +2611,10 @@ async function mixOverlays(base, trimStart) {
     }
     var outDur = len / sr;
     ov.forEach(function (t) {
-      var delta = t.start - trimStart;
-      // The Skip cut plus any time already elapsed before the export window
-      // both advance the start position inside the overlay buffer.
+      var delta = (t.start - trimStart) / spd;
+      // The Skip cut plus any clip time already elapsed before the export
+      // window both advance the start position inside the overlay buffer,
+      // scaled to the warped timeline.
       var off = (delta < 0 ? -delta : 0) + (t.skip || 0);
       if (off >= t.dur) return; // nothing left of this overlay
       if (Math.max(0, delta) >= outDur) return; // starts past the export end
@@ -2711,6 +2783,7 @@ function collectSettings() {
     manualZoom: MANUAL_ZOOM,
     exportFps: EXPORT_FPS,
     exportFmt: EXPORT_FMT,
+    speed: PLAY_SPEED,
     trimStart: TRIM_START,
     trimEnd: TRIM_END,
     notches: NOTCHES.map(function (n) { return { f: n.f, w: n.w }; }),
@@ -2795,6 +2868,11 @@ el("loadFile").addEventListener("change", function (e) {
       if (typeof s.exportFmt === "string" && FORMATS[s.exportFmt]) {
         EXPORT_FMT = s.exportFmt;
         el("expFmt").value = EXPORT_FMT;
+      }
+      if (typeof s.speed === "number" && SPEEDS.indexOf(s.speed) >= 0) {
+        PLAY_SPEED = s.speed;
+        el("spdSel").value = String(PLAY_SPEED);
+        applySpeed();
       }
       if (typeof s.trimStart === "number" && s.trimStart >= 0) {
         TRIM_START = s.trimStart;
