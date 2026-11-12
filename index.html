@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.12. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.13. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -161,6 +161,13 @@
       <div class="card">
         <div class="cardtitle">Export</div>
         <div class="row wrap2">
+          <span><span class="lab">Format</span>
+            <select id="expFmt">
+              <option value="mp4" selected>MP4 (H.264 + AAC)</option>
+              <option value="webm">WebM (VP9 + Opus)</option>
+              <option value="mov">MOV (H.264 + AAC)</option>
+              <option value="mkv">MKV (H.264 + AAC)</option>
+            </select></span>
           <span><span class="lab">Frame rate</span>
             <select id="expFps">
               <option value="24">24 fps</option>
@@ -195,6 +202,9 @@
           WebCodecs. Cut start/end remove seconds from the beginning or end
           of the finished export only: the cut is applied after all effects,
           so the timeline, keyframes and shake stay in full-clip time.
+          Format picks the container and codecs of the export; if your
+          browser cannot encode the first codec, the next one listed in
+          the dropdown entry is tried.
         </p>
       </div>
     </div>
@@ -798,7 +808,7 @@ var META = null, ENGINE = null;
 var PARAMS = { intensity: 1, drift: 1, sway: 1, tremor: 1, rotation: 1, bounce: 0, breath: 1 };
 var SEED = 1337, TRAJ = null, TRANSFER_SCALE = 1;
 var SHAKE_ON = true, ZOOM_AUTO = true, MANUAL_ZOOM = 1.08, AUTO_ZOOM = 1;
-var EXPORT_FPS = 30, QUALITY = 16000000;
+var EXPORT_FPS = 30, QUALITY = 16000000, EXPORT_FMT = "mp4";
 var TRIM_START = 0, TRIM_END = 0;
 var EXPORT_FALLBACK = "";
 var EXPORTING = false, ANALYZING = false, CONV_BUSY = false;
@@ -1127,15 +1137,41 @@ el("zmSlider").addEventListener("input", function (e) {
 });
 
 /* ================= export ================= */
-function pickMime() {
-  var cands = [
+// Output format table. Each entry lists the video and audio codec candidates
+// the frame-accurate path tries in order; the first one the browser can
+// encode wins. mkv candidates for the real-time path use WebM, since
+// MediaRecorder cannot produce Matroska.
+var FORMATS = {
+  mp4: {
+    label: "MP4", ext: "mp4", mime: "video/mp4", cls: "Mp4OutputFormat",
+    v: ["avc"], a: ["aac", "opus"], rec: "mp4"
+  },
+  webm: {
+    label: "WebM", ext: "webm", mime: "video/webm", cls: "WebMOutputFormat",
+    v: ["vp9", "vp8"], a: ["opus"], rec: "webm"
+  },
+  mov: {
+    label: "MOV", ext: "mov", mime: "video/quicktime", cls: "MovOutputFormat",
+    v: ["avc"], a: ["aac", "opus"], rec: "mp4"
+  },
+  mkv: {
+    label: "MKV", ext: "mkv", mime: "video/x-matroska", cls: "MkvOutputFormat",
+    v: ["avc", "vp9"], a: ["aac", "opus"], rec: "webm"
+  }
+};
+function fmtConf() { return FORMATS[EXPORT_FMT] || FORMATS.mp4; }
+function pickMime(pref) {
+  var mp4c = [
     'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
     "video/mp4;codecs=avc1",
-    "video/mp4",
+    "video/mp4"
+  ];
+  var webmc = [
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm"
   ];
+  var cands = pref === "webm" || pref === "mkv" ? webmc.concat(mp4c) : mp4c.concat(webmc);
   for (var i = 0; i < cands.length; i++) {
     try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(cands[i])) return cands[i]; } catch (e) {}
   }
@@ -1144,6 +1180,7 @@ function pickMime() {
 
 el("expFps").addEventListener("change", function (e) { EXPORT_FPS = parseInt(e.target.value); });
 el("expQ").addEventListener("change", function (e) { QUALITY = parseInt(e.target.value); });
+el("expFmt").addEventListener("change", function (e) { EXPORT_FMT = e.target.value; });
 el("trimStart").addEventListener("change", function (e) {
   var v = parseFloat(e.target.value);
   TRIM_START = (isNaN(v) || v < 0) ? 0 : v;
@@ -1224,7 +1261,7 @@ async function startExportRealtime() {
     if (at) stream.addTrack(at);
   } catch (e) {}
 
-  var mime = pickMime();
+  var mime = pickMime(fmtConf().rec);
   var opts = { videoBitsPerSecond: QUALITY };
   if (mime) opts.mimeType = mime;
   var rec = new MediaRecorder(stream, opts);
@@ -1261,6 +1298,7 @@ async function startExportRealtime() {
     a.textContent = "Download " + ext.toUpperCase() + " (" + fmtSize(blob.size) + ")";
     a.style.display = "inline-block";
     el("expMsg").textContent = "Export finished." +
+      (fmtConf().ext !== ext ? " Real-time recording cannot produce " + fmtConf().label + "; the file was saved as " + ext.toUpperCase() + " instead." : "") +
       (EXPORT_FALLBACK
         ? " Real-time fallback was used (" + EXPORT_FALLBACK + "); smoothness is not guaranteed."
         : "");
@@ -1313,8 +1351,18 @@ function loadMediabunny() {
 async function startExportAccurate() {
   var MB = await loadMediabunny();
   if (!MB) throw new Error("export library failed to initialize");
-  if (MB.canEncodeVideo && !(await MB.canEncodeVideo("avc", { width: META.w, height: META.h, bitrate: QUALITY }))) {
-    throw new Error("this browser cannot encode H.264 video");
+  var fmt = fmtConf();
+  var vCodec = null;
+  if (MB.canEncodeVideo) {
+    for (var vi = 0; vi < fmt.v.length; vi++) {
+      if (await MB.canEncodeVideo(fmt.v[vi], { width: META.w, height: META.h, bitrate: QUALITY })) {
+        vCodec = fmt.v[vi];
+        break;
+      }
+    }
+  }
+  if (!vCodec) {
+    throw new Error("this browser cannot encode " + fmt.v.join(" or ") + " video for " + fmt.label);
   }
 
   // Decode the source audio once. vid.src is always a blob URL (original
@@ -1348,17 +1396,19 @@ async function startExportAccurate() {
   var output = null;
   try {
     output = new MB.Output({
-      format: new MB.Mp4OutputFormat({ fastStart: "in-memory" }),
+      format: new MB[fmt.cls]({ fastStart: "in-memory" }),
       target: new MB.BufferTarget()
     });
-    var vsrc = new MB.CanvasSource(cv, { codec: "avc", bitrate: QUALITY });
+    var vsrc = new MB.CanvasSource(cv, { codec: vCodec, bitrate: QUALITY });
     output.addVideoTrack(vsrc, { frameRate: EXPORT_FPS });
-    var aCodec = "aac";
+    var aCodec = null;
     if (audioBuf && MB.canEncodeAudio) {
-      if (!(await MB.canEncodeAudio("aac"))) {
-        if (await MB.canEncodeAudio("opus")) { aCodec = "opus"; }
-        else { audioBuf = null; }
+      for (var ai = 0; ai < fmt.a.length; ai++) {
+        if (await MB.canEncodeAudio(fmt.a[ai])) { aCodec = fmt.a[ai]; break; }
       }
+      if (!aCodec) audioBuf = null;
+    } else if (audioBuf) {
+      aCodec = fmt.a[0];
     }
     if (audioBuf) {
       var asrc = new MB.AudioBufferSource({ codec: aCodec, bitrate: 192000 });
@@ -1393,12 +1443,12 @@ async function startExportAccurate() {
       }
     }
     await output.finalize();
-    var blob = new Blob([output.target.buffer], { type: "video/mp4" });
+    var blob = new Blob([output.target.buffer], { type: fmt.mime });
     RESULT_URL = URL.createObjectURL(blob);
     var a = el("dlLink");
     a.href = RESULT_URL;
-    a.download = "shaken_" + (META.name ? META.name.replace(/\.[^.]+$/, "") : "video") + ".mp4";
-    a.textContent = "Download MP4 (" + fmtSize(blob.size) + ")";
+    a.download = "shaken_" + (META.name ? META.name.replace(/\.[^.]+$/, "") : "video") + "." + fmt.ext;
+    a.textContent = "Download " + fmt.label + " (" + fmtSize(blob.size) + ")";
     a.style.display = "inline-block";
     el("expMsg").textContent =
       "Export finished: " + total + " frames at " + fps + " fps" +
@@ -2660,6 +2710,7 @@ function collectSettings() {
     zoomAuto: ZOOM_AUTO,
     manualZoom: MANUAL_ZOOM,
     exportFps: EXPORT_FPS,
+    exportFmt: EXPORT_FMT,
     trimStart: TRIM_START,
     trimEnd: TRIM_END,
     notches: NOTCHES.map(function (n) { return { f: n.f, w: n.w }; }),
@@ -2740,6 +2791,10 @@ el("loadFile").addEventListener("change", function (e) {
       if (typeof s.exportFps === "number" && [24, 25, 30, 60].indexOf(s.exportFps) >= 0) {
         EXPORT_FPS = s.exportFps;
         el("expFps").value = String(EXPORT_FPS);
+      }
+      if (typeof s.exportFmt === "string" && FORMATS[s.exportFmt]) {
+        EXPORT_FMT = s.exportFmt;
+        el("expFmt").value = EXPORT_FMT;
       }
       if (typeof s.trimStart === "number" && s.trimStart >= 0) {
         TRIM_START = s.trimStart;
