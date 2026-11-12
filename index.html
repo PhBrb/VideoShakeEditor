@@ -71,7 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Camera Shake Studio</h1>
-    <span class="muted small">Standalone version, v1.11. Runs entirely in your browser, nothing is uploaded.</span>
+    <span class="muted small">Standalone version, v1.12. Runs entirely in your browser, nothing is uploaded.</span>
   </header>
 
   <div class="grid">
@@ -292,10 +292,12 @@
         <div id="ovList"></div>
         <p class="note" style="margin:8px 0 0 0">
           Extra audio extracted from other videos or audio files, mixed onto
-          the export. Start is in seconds on the source video's timeline and
-          shifts with the trim window. Band rejects apply only to the source
-          video's own audio, never to overlays. Preview playback includes
-          overlays; they are not part of the saved settings file.
+          the export. At places the overlay on the source video's timeline
+          (it shifts with the trim window); Skip cuts the first seconds off
+          the overlay's own audio so unwanted intros or lead-in can be
+          removed. Band rejects apply only to the source video's own audio,
+          never to overlays. Preview playback includes overlays; they are
+          not part of the saved settings file.
         </p>
       </div>
 
@@ -2449,8 +2451,10 @@ function scheduleOverlays() {
   var now = vid.currentTime;
   activeOverlays().forEach(function (t) {
     var delta = t.start - now;
-    var off = delta < 0 ? Math.min(t.dur, -delta) : 0;
-    if (off >= t.dur) return; // track already finished at this position
+    // Position inside the overlay: time already elapsed since its At point,
+    // plus the Skip cut from the overlay's own beginning.
+    var off = (delta < 0 ? -delta : 0) + (t.skip || 0);
+    if (off >= t.dur) return; // skipped past the end of this overlay
     var when = delta > 0 ? t0 + delta : t0;
     var src = audioCtx.createBufferSource();
     src.buffer = t.buf;
@@ -2487,8 +2491,10 @@ async function mixOverlays(base, trimStart) {
     var outDur = len / sr;
     ov.forEach(function (t) {
       var delta = t.start - trimStart;
-      var off = delta < 0 ? Math.min(t.dur, -delta) : 0;
-      if (off >= t.dur) return;
+      // The Skip cut plus any time already elapsed before the export window
+      // both advance the start position inside the overlay buffer.
+      var off = (delta < 0 ? -delta : 0) + (t.skip || 0);
+      if (off >= t.dur) return; // nothing left of this overlay
       if (Math.max(0, delta) >= outDur) return; // starts past the export end
       var src = ctx.createBufferSource();
       src.buffer = t.buf;
@@ -2540,9 +2546,27 @@ function renderOverlayList() {
     });
     var startLab = document.createElement("label");
     startLab.className = "check";
-    startLab.appendChild(document.createTextNode("Start "));
+    startLab.appendChild(document.createTextNode("At "));
     startLab.appendChild(startIn);
     startLab.appendChild(document.createTextNode(" s"));
+    var skipIn = document.createElement("input");
+    skipIn.type = "number";
+    skipIn.min = "0"; skipIn.max = "10000"; skipIn.step = "0.05";
+    skipIn.value = t.skip || 0;
+    skipIn.style.width = "72px";
+    skipIn.disabled = !t.buf;
+    skipIn.addEventListener("change", function (e) {
+      var v = parseFloat(e.target.value);
+      if (isNaN(v) || v < 0) v = 0;
+      t.skip = Math.min(t.dur || 10000, v);
+      e.target.value = String(t.skip);
+      if (!vid.paused) scheduleOverlays();
+    });
+    var skipLab = document.createElement("label");
+    skipLab.className = "check";
+    skipLab.appendChild(document.createTextNode("Skip "));
+    skipLab.appendChild(skipIn);
+    skipLab.appendChild(document.createTextNode(" s"));
     var gainIn = document.createElement("input");
     gainIn.type = "number";
     gainIn.min = "0"; gainIn.max = "4"; gainIn.step = "0.05";
@@ -2576,6 +2600,7 @@ function renderOverlayList() {
       : (t.msg || "decoding...");
     row.appendChild(lab);
     row.appendChild(startLab);
+    row.appendChild(skipLab);
     row.appendChild(gainLab);
     row.appendChild(del);
     row.appendChild(info);
@@ -2586,7 +2611,7 @@ function renderOverlayList() {
 function addOverlayFiles(files) {
   var AC = window.AudioContext || window.webkitAudioContext;
   Array.prototype.forEach.call(files, function (f) {
-    var t = { name: f.name, start: 0, gain: 1, on: true, buf: null, dur: 0, sr: 0, msg: "decoding..." };
+    var t = { name: f.name, start: 0, skip: 0, gain: 1, on: true, buf: null, dur: 0, sr: 0, msg: "decoding..." };
     EXT.push(t);
     renderOverlayList();
     var fr = new FileReader();
